@@ -159,6 +159,7 @@ static int build_keys(const void *fdt)
 /* Diagnostic: -1 = never attempted, -3 = start_menu failed,
  * -2 = entry transfer failed, 0 = GUI loop entered. */
 static int GuiStatus = -1;
+static char FailureDetail[64];
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
 static kshim_framebuffer_t Framebuffer;
 static kshim_lvgl_t Lvgl;
@@ -1331,6 +1332,9 @@ static int menu_fill_settings(struct menu_selection *menu)
         menu_append(&menu->pages[MENU_PAGE_DEVICE], KSHIM_MENU_LABEL_DEV_323,
                     kshim_menu_text(KSHIM_TEXT_DEVICE_TB323FU_DESC), MENU_DEVICE_SET, BOOT_DEVICE_TB323FU,
                     KSHIM_MENU_ROLE_DEVICE_TB323FU) ||
+        menu_append(&menu->pages[MENU_PAGE_DEVICE], "Xiaomi Pad 6S Pro",
+                    "sheng (SM8550)", MENU_DEVICE_SET, BOOT_DEVICE_SHENG,
+                    KSHIM_MENU_ROLE_DEVICE) ||
         menu_append(&menu->pages[MENU_PAGE_DEVICE], KSHIM_MENU_ACTION_BACK,
                     KSHIM_MENU_DESC_BACK_PARENT,
                     MENU_BACK, 0, KSHIM_MENU_ROLE_BACK))
@@ -1663,6 +1667,8 @@ static int menu_activate(struct menu_selection *menu, size_t index,
         int result = kshim_qcom_reboot_request(menu->fdt, target);
         *failure = result == KSHIM_QCOM_REBOOT_ROLLBACK_FAILED ?
             KSHIM_STR_RESTORE_FAILED : KSHIM_STR_MODE_FAILED;
+        snprintf(FailureDetail, sizeof(FailureDetail), "%s (%d)", *failure, result);
+        *failure = FailureDetail;
         printf("%s: %d\n", *failure, result);
         return 0;
     }

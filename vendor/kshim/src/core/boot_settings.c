@@ -13,6 +13,7 @@ static bool device_choice_valid(enum boot_device_choice choice)
     case BOOT_DEVICE_AUTO:
     case BOOT_DEVICE_TB322FC:
     case BOOT_DEVICE_TB323FU:
+    case BOOT_DEVICE_SHENG:
         return true;
     default:
         return false;
@@ -101,6 +102,9 @@ int boot_settings_effective_board(const struct boot_settings *settings,
         break;
     case BOOT_DEVICE_TB323FU:
         *out = DEVICE_BOARD_TB323FU;
+        break;
+    case BOOT_DEVICE_SHENG:
+        *out = DEVICE_BOARD_SHENG;
         break;
     default:
         return BOOT_SETTINGS_INVALID;
