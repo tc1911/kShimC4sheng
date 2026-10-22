@@ -23,7 +23,7 @@ void arm64_diag_head_tail(uint64_t kernel_base, uint64_t dtb, uint64_t android_e
 #endif
 extern unsigned char __image_start_address__[];
 extern unsigned char __runtime_end_address__[];
-static uint64_t HandoffDtb[256 * 1024 / sizeof(uint64_t)]; /* bounded private DT scratch; 4 MiB linker assert applies */
+static uint64_t HandoffDtb[512 * 1024 / sizeof(uint64_t)]; /* bounded private DT scratch; 4 MiB linker assert applies */
 /* Early, independent packed runtime-memory snapshot (32 KiB) and the DT
  * overlay/apply scratch (64 KiB); both bounded, aligned for FDT access, and
  * consumed only by the new dt_memory_capture/dt_memory_apply API. */
@@ -1121,33 +1121,40 @@ int kshim_main(
         if ((entry->flags & MF_ENTRY_FLAG_BASE_IMAGE) &&
             !(entry->flags & MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB) &&
             device_tree_address != 0) {
-            /* Diagnostic: copy the bootloader DT into the private handoff
-             * buffer, attach a compact status string, and hand the copy to
-             * the stock kernel.  Android exposes it as
-             * /proc/device-tree/chosen/kshim,diag. */
-            void *src = (void *)(uintptr_t)device_tree_address;
-            void *dst = (void *)(uintptr_t)HandoffDtb;
-            if (fdt_open_into(src, dst, sizeof(HandoffDtb)) == 0) {
-                int dchosen = fdt_path_offset(dst, "/chosen");
-                struct kshim_resources *rr = kshim_resources_get();
-                char diag[192];
-                int dn = snprintf(diag, sizeof(diag),
-                                  "splash=%d;gui=%d;fb=%ux%u;stride=%u;sel=%u",
-                                  rr ? rr->splash_status : -99,
-                                  kshim_platform_gui_status(),
-                                  rr ? (unsigned)rr->framebuffer.width : 0U,
-                                  rr ? (unsigned)rr->framebuffer.height : 0U,
-                                  rr ? (unsigned)rr->framebuffer.stride : 0U,
-                                  (unsigned)selected_index);
-                if (dchosen >= 0 && dn > 0 && dn < (int)sizeof(diag) &&
-                    fdt_setprop(dst, dchosen, "kshim,diag", diag, dn + 1) == 0) {
-                    (void)fdt_pack(dst);
-                    selected_device_tree = (uint64_t)(uintptr_t)dst;
+            /* Diagnostic: attach a compact status string to /chosen so the
+             * stock kernel exposes it as /proc/device-tree/chosen/kshim,diag.
+             * Try the bootloader DT in place first; fall back to the private
+             * scratch buffer when the blob has no free space. */
+            struct kshim_resources *rr = kshim_resources_get();
+            char diag[192];
+            int dn = snprintf(diag, sizeof(diag),
+                              "splash=%d;gui=%d;fb=%ux%u;stride=%u;sel=%u",
+                              rr ? rr->splash_status : -99,
+                              kshim_platform_gui_status(),
+                              rr ? (unsigned)rr->framebuffer.width : 0U,
+                              rr ? (unsigned)rr->framebuffer.height : 0U,
+                              rr ? (unsigned)rr->framebuffer.stride : 0U,
+                              (unsigned)selected_index);
+            if (dn > 0 && dn < (int)sizeof(diag)) {
+                void *src = (void *)(uintptr_t)device_tree_address;
+                int dchosen = fdt_path_offset(src, "/chosen");
+                if (dchosen >= 0 &&
+                    fdt_setprop(src, dchosen, "kshim,diag", diag, dn + 1) == 0) {
+                    selected_device_tree = (uint64_t)(uintptr_t)src;
+                } else {
+                    void *dst = (void *)(uintptr_t)HandoffDtb;
+                    if (fdt_open_into(src, dst, sizeof(HandoffDtb)) == 0) {
+                        int c = fdt_path_offset(dst, "/chosen");
+                        if (c >= 0 &&
+                            fdt_setprop(dst, c, "kshim,diag", diag, dn + 1) == 0) {
+                            (void)fdt_pack(dst);
+                            selected_device_tree = (uint64_t)(uintptr_t)dst;
+                        }
+                    }
                 }
             }
         }
 #endif
-
         if (entry->flags & MF_ENTRY_FLAG_COPY) {
             uint64_t source_address = linux_base + entry->offset;
             printf("Copying ");
