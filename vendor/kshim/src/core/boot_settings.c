@@ -51,6 +51,7 @@ static bool detected_valid(enum device_board board)
     case DEVICE_BOARD_UNKNOWN:
     case DEVICE_BOARD_TB322FC:
     case DEVICE_BOARD_TB323FU:
+    case DEVICE_BOARD_SHENG:
         return true;
     default:
         return false;

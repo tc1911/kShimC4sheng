@@ -46,6 +46,24 @@ static bool list_contains(const char *list, int len, const char *entry)
     return fdt_stringlist_contains(list, len, entry) > 0;
 }
 
+/* ASCII case-insensitive substring; downstream model strings are ASCII. */
+static bool model_contains(const char *model, const char *needle)
+{
+    size_t n = strlen(needle);
+    if (!model || !n) return false;
+    for (; *model; ++model) {
+        size_t i;
+        for (i = 0; i < n; ++i) {
+            char a = model[i], b = needle[i];
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+            if (!a || a != b) break;
+        }
+        if (i == n) return true;
+    }
+    return false;
+}
+
 /* True when list is a well formed nonempty string list: at least one entry,
  * no empty entry and a terminal NUL. */
 static bool compatible_list_valid(const char *list, int len)
@@ -95,14 +113,18 @@ static int memory_total(const void *fdt, uint64_t *total)
 
             if (dt_raw_reg(fdt, node, (unsigned)i, &address, &size))
                 return -1;
+            (void)address;
+            /* Downstream ABL trees can carry an explicitly zero-sized
+             * placeholder bank; it contributes nothing. An all-zero total
+             * still leaves RAM unknown below. */
             if (!size)
-                return -1;
+                continue;
             if (sum > UINT64_MAX - size)
                 return -1;
             sum += size;
         }
     }
-    if (!any)
+    if (!any || !sum)
         return -1;
 
     *total = sum;
@@ -155,7 +177,7 @@ void device_info_read(const void *validated_fdt, struct device_info *info)
     const char *model, *compatible;
     int compat_len, off, rc;
     size_t cap, used;
-    bool truncated, tb322, tb323, soc8750, soc8850, soc8550;
+    bool truncated, tb322, tb323, sheng, soc8750, soc8850, soc8550;
     uint64_t ram = 0;
 
     if (!info)
@@ -207,7 +229,10 @@ void device_info_read(const void *validated_fdt, struct device_info *info)
                   list_contains(compatible, compat_len, "qcom,canoep") ||
                   list_contains(compatible, compat_len, "qcom,kaanapali") ||
                   list_contains(compatible, compat_len, "qcom,sm8850");
-        soc8550 = list_contains(compatible, compat_len, "qcom,sm8550");
+        soc8550 = list_contains(compatible, compat_len, "qcom,sm8550") ||
+                  list_contains(compatible, compat_len, "qcom,kalama");
+        sheng = list_contains(compatible, compat_len, "xiaomi,sheng") ||
+                (soc8550 && model_contains(model, "sheng"));
 
         /* The trusted Linux reference pairing (elden + sm8750) is unchanged.
          * A stock TB322FC is additionally accepted from the measured .096
@@ -235,6 +260,8 @@ void device_info_read(const void *validated_fdt, struct device_info *info)
                      "nt36523 3k fhd plus 165Hz DPHY video panel"));
         if (tb322 != tb323)
             info->board = tb322 ? DEVICE_BOARD_TB322FC : DEVICE_BOARD_TB323FU;
+        else if (!tb322 && !tb323 && sheng)
+            info->board = DEVICE_BOARD_SHENG;
 
         if ((soc8750 ? 1 : 0) + (soc8850 ? 1 : 0) + (soc8550 ? 1 : 0) == 1)
             info->soc = soc8750 ? DEVICE_SOC_SM8750 :

@@ -25,6 +25,8 @@
  *     "qcom,sm8750" (the trusted Linux TB322FC reference), or the alternate
  *     strict stock fingerprint described below.
  *   - DEVICE_BOARD_TB323FU: exact "lenovo,tb323fu" or exact "lenovo,baldur".
+ *   - DEVICE_BOARD_SHENG: exact "xiaomi,sheng", or an SM8550 root whose
+ *     original model string contains the downstream code name "sheng".
  *   - "qcom,canoep" alone is a SoC marker, not a board identity.
  * Conflicting board evidence leave the board UNKNOWN; unrelated
  * devices that share a SoC keep the board UNKNOWN.
@@ -42,7 +44,8 @@
  *   - DEVICE_SOC_SM8750: "qcom,sun", "qcom,sunp" or "qcom,sm8750".
  *   - DEVICE_SOC_SM8850: "qcom,canoe", "qcom,canoep", "qcom,kaanapali" or
  *     "qcom,sm8850".
- *   - DEVICE_SOC_SM8550: "qcom,sm8550".
+ *   - DEVICE_SOC_SM8550: "qcom,sm8550" or the downstream family name
+ *     "qcom,kalama".
  * Entries from more than one group leave the SoC UNKNOWN.
  *
  * The compatible field preserves the original root compatible list verbatim
@@ -61,14 +64,17 @@
  * reported RAM only: overlapping or duplicate ranges are not normalized,
  * reservations are not subtracted, and it is neither available nor physical
  * RAM. Any enabled memory node with a missing or malformed reg, an unsupported
- * cell count, a zero-sized tuple, an address-end overflow, or a sum overflow
- * makes the whole total unknown (ram_known == false, zero bytes). Disabled
- * memory nodes are excluded; with no enabled memory node the total is unknown.
+ * cell count, an address-end overflow, or a sum overflow makes the whole total
+ * unknown (ram_known == false, zero bytes). Explicitly zero-sized placeholder
+ * banks contribute nothing and are skipped; a total of zero stays unknown.
+ * Disabled memory nodes are excluded; with no enabled memory node the total is
+ * unknown.
  */
 enum device_board {
     DEVICE_BOARD_UNKNOWN = 0,
     DEVICE_BOARD_TB322FC,
     DEVICE_BOARD_TB323FU,
+    DEVICE_BOARD_SHENG,
 };
 
 enum device_soc {

@@ -768,6 +768,7 @@ static int menu_fill_device_info(struct menu_selection *menu)
     snprintf(menu->info_values[0], sizeof(menu->info_values[0]), "%s",
              info->board == DEVICE_BOARD_TB322FC ? "TB322FC" :
              info->board == DEVICE_BOARD_TB323FU ? "TB323FU" :
+             info->board == DEVICE_BOARD_SHENG ? "Xiaomi Pad 6S Pro" :
              kshim_menu_text(KSHIM_TEXT_UNKNOWN));
     snprintf(menu->info_values[1], sizeof(menu->info_values[1]), "%s",
              info->soc == DEVICE_SOC_SM8750 ? "SM8750" :
@@ -910,6 +911,7 @@ static const char *settings_board_name(enum device_board board)
 {
     if (board == DEVICE_BOARD_TB322FC) return kshim_menu_text(KSHIM_TEXT_BOARD_TB322FC_NAME);
     if (board == DEVICE_BOARD_TB323FU) return kshim_menu_text(KSHIM_TEXT_BOARD_TB323FU_NAME);
+    if (board == DEVICE_BOARD_SHENG) return "Xiaomi Pad 6S Pro";
     return kshim_menu_text(KSHIM_TEXT_UNKNOWN);
 }
 /* Localized platform code for a board. */
@@ -917,6 +919,7 @@ static const char *settings_board_code(enum device_board board)
 {
     if (board == DEVICE_BOARD_TB322FC) return kshim_menu_text(KSHIM_TEXT_DEVICE_TB322FC_NAME);
     if (board == DEVICE_BOARD_TB323FU) return kshim_menu_text(KSHIM_TEXT_DEVICE_TB323FU_NAME);
+    if (board == DEVICE_BOARD_SHENG) return "sheng";
     return kshim_menu_text(KSHIM_TEXT_UNKNOWN);
 }
 /* Row index of the selectable Default-page row that matches the resolved
@@ -1219,9 +1222,6 @@ static int menu_fill_settings(struct menu_selection *menu)
                 menu->page = MENU_PAGE_ADVANCED;
                 page->initial = row;
             }
-        } else if (menu_append(page, name, kshim_menu_text(KSHIM_TEXT_UNAVAILABLE),
-                               MENU_UNAVAILABLE, 0, KSHIM_MENU_ROLE_DIAGNOSTIC)) {
-            return -1;
         }
     }
 
