@@ -47,11 +47,13 @@ if [ ${#missing[@]} -gt 0 ]; then
   exit 1
 fi
 
+DEFCONFIG=${1:-config/sheng_defconfig}
+OUT=${2:-out/runtime}
 python3 vendor/kshim/tools/build_runtime.py \
-  --config config/sheng_defconfig \
-  --out out/runtime \
+  --config "$DEFCONFIG" \
+  --out "$OUT" \
   --jobs "${JOBS:-8}"
 
-install -m 0644 out/runtime/kShimC.bin out/runtime.bin
+install -m 0644 "$OUT/kShimC.bin" out/runtime.bin
 ls -l out/runtime.bin
 sha256sum out/runtime.bin

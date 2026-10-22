@@ -156,6 +156,9 @@ static int build_keys(const void *fdt)
     (void)fdt; return -1;
 #endif
 }
+/* Diagnostic: -1 = never attempted, -3 = start_menu failed,
+ * -2 = entry transfer failed, 0 = GUI loop entered. */
+static int GuiStatus = -1;
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
 static kshim_framebuffer_t Framebuffer;
 static kshim_lvgl_t Lvgl;
@@ -1798,7 +1801,10 @@ static int platform_select(uint64_t fdt, const char *const *names,
 #endif
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
     struct menu_page *page = &menu.pages[menu.page];
+    GuiStatus = -1;
     int status = start_menu(menu.fdt);
+    if (status) GuiStatus = -3;
+    else GuiStatus = -2;
 #if !CONFIG_KSHIM_DEBUG_CONSOLE
     /* True once the initial GUI page was shown and the interactive loop was
      * entered; a later subpage rebuild failure keeps it true. */
@@ -1807,6 +1813,7 @@ static int platform_select(uint64_t fdt, const char *const *names,
     if (!status && kshim_lvgl_set_entries_described(&Lvgl, page->names, page->descriptions,
                                                    page->action_labels, page->count,
                                                    page->initial) == 0) {
+        GuiStatus = 0;
 #if !CONFIG_KSHIM_DEBUG_CONSOLE
         gui_entered = 1;
 #endif
@@ -1964,6 +1971,11 @@ int kshim_platform_select_localized_settings(uint64_t fdt, const char *const *na
                             timeout_ms, 0, 0, KSHIM_MENU_LANGUAGE_ENABLED, 1, selected);
 #endif
 }
+int kshim_platform_gui_status(void)
+{
+    return GuiStatus;
+}
+
 int kshim_platform_main(uint64_t fdt, uint64_t arg1, uint64_t arg2, uint64_t arg3)
 {
     kshim_boot_set_args(fdt, arg1, arg2, arg3);

@@ -4,6 +4,16 @@ config KSHIM_BOOT_TIMING
     bool "Record boot stages in the selected Linux device tree"
     default n
 
+config KSHIM_DIAG_MARKER
+    bool "Copy /chosen/kshim,diag into the Android base device tree"
+    default n
+    help
+      Diagnostic only: when the selected entry is the stock base image,
+      copy the runtime DT into the private handoff buffer, add a compact
+      splash/UI status string under /chosen/kshim,diag and hand that copy
+      to the stock kernel.  Android then exposes it through
+      /proc/device-tree/chosen/kshim,diag.
+
 config KSHIM_QCOM_REBOOT
     bool "DT-selected Qualcomm recovery, bootloader and EDL targets"
     depends on QCOM_SPMI

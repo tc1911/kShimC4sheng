@@ -1117,6 +1117,37 @@ int kshim_main(
                 arm64_boot_linux(linux_base, device_tree_address, 4);
             }
         }
+#if defined(CONFIG_KSHIM_DIAG_MARKER) && CONFIG_KSHIM_DIAG_MARKER
+        if ((entry->flags & MF_ENTRY_FLAG_BASE_IMAGE) &&
+            !(entry->flags & MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB) &&
+            device_tree_address != 0) {
+            /* Diagnostic: copy the bootloader DT into the private handoff
+             * buffer, attach a compact status string, and hand the copy to
+             * the stock kernel.  Android exposes it as
+             * /proc/device-tree/chosen/kshim,diag. */
+            void *src = (void *)(uintptr_t)device_tree_address;
+            void *dst = (void *)(uintptr_t)HandoffDtb;
+            if (fdt_open_into(src, dst, sizeof(HandoffDtb)) == 0) {
+                int dchosen = fdt_path_offset(dst, "/chosen");
+                struct kshim_resources *rr = kshim_resources_get();
+                char diag[192];
+                int dn = snprintf(diag, sizeof(diag),
+                                  "splash=%d;gui=%d;fb=%ux%u;stride=%u;sel=%u",
+                                  rr ? rr->splash_status : -99,
+                                  kshim_platform_gui_status(),
+                                  rr ? (unsigned)rr->framebuffer.width : 0U,
+                                  rr ? (unsigned)rr->framebuffer.height : 0U,
+                                  rr ? (unsigned)rr->framebuffer.stride : 0U,
+                                  (unsigned)selected_index);
+                if (dchosen >= 0 && dn > 0 && dn < (int)sizeof(diag) &&
+                    fdt_setprop(dst, dchosen, "kshim,diag", diag, dn + 1) == 0) {
+                    (void)fdt_pack(dst);
+                    selected_device_tree = (uint64_t)(uintptr_t)dst;
+                }
+            }
+        }
+#endif
+
         if (entry->flags & MF_ENTRY_FLAG_COPY) {
             uint64_t source_address = linux_base + entry->offset;
             printf("Copying ");
