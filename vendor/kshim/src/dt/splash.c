@@ -287,7 +287,7 @@ int kshim_dt_splash(const void *f, const struct CrIo *io,
     bool lm_source_select = sun || canoe;
     resources.lm_source_select = lm_source_select;
     resources.sspp_rec_separated = canoe;
-    int pipes = offsets(f, sde, "qcom,sde-sspp-off", resources.pipe, lm_source_select ? 10 : 8);
+    int pipes = offsets(f, sde, "qcom,sde-sspp-off", resources.pipe, 10);
     int ctls = offsets(f, sde, "qcom,sde-ctl-off", resources.ctl, 8);
 #if KSHIM_DIAGNOSTIC_RESOURCES_ONLY
     /* Stage 6: mixer offset parsing/compaction. */
@@ -310,7 +310,18 @@ int kshim_dt_splash(const void *f, const struct CrIo *io,
         }
         if (count < 1) return -1;
     } else {
-        count = offsets(f, sde, "qcom,sde-mixer-off", resources.mixer, 6);
+        /* SM8550 (DPU 9.x) lists eight mixer slots but leaves the last two
+           as 0xf0f dummies. Keep only the real, leading mixers: the legacy
+           routing decoder addresses layer m by its compacted position. */
+        raw_n = offsets(f, sde, "qcom,sde-mixer-off", raw, 8);
+        if (raw_n < 1) return -1;
+        count = 0;
+        for (int i = 0; i < raw_n; ++i) {
+            if (raw[i] == 0 || raw[i] == 0xf0f) continue;
+            if (count >= 6) return -1;
+            resources.mixer[count++] = raw[i];
+        }
+        if (count < 1) return -1;
     }
 #if KSHIM_DIAGNOSTIC_RESOURCES_ONLY
     /* Stage 7: pipe/CTL/mixer count validation. */
@@ -333,7 +344,7 @@ int kshim_dt_splash(const void *f, const struct CrIo *io,
     /* Stage 9: SSPP type table. */
     g_kshim_splash_trace.dt_stage = 9;
 #endif
-    unsigned vig = 0, dma = 0, dma_max = lm_source_select ? 6 : 4;
+    unsigned vig = 0, dma = 0, dma_max = 6;
     int types = fdt_stringlist_count(f, sde, "qcom,sde-sspp-type");
     for (int i = 0; i < pipes; ++i) {
         int len;
