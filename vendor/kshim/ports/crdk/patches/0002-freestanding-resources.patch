@@ -2156,7 +2156,7 @@ new file mode 100644
 index 0000000..103ac0b
 --- /dev/null
 +++ b/Library/DisplayLib/splash.c
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,539 @@
 +/* SPDX-License-Identifier: MIT */
 +#include <Library/cr_splash.h>
 +#include <oskal/cr_string.h>
@@ -2615,11 +2615,13 @@ index 0000000..103ac0b
 +        !r->pipe_count || !r->ctl_count || !r->mixer_count || !r->reserved_size) return CR_BUS_INVALID;
 +    if (r->sspp_rec_separated && !r->lm_source_select) return CR_BUS_INVALID;
 +    bool canoe = r->lm_source_select;
-+    if (r->pipe_count > (canoe ? 10 : 8) || r->ctl_count > 8 || r->mixer_count > (canoe ? 8 : 6))
++    /* SM8550 (DPU 9.x) exposes 10 SSPPs (4 VIG + 6 DMA) even though it uses
++     * the legacy routing decoder; older legacy targets still fit in 10. */
++    if (r->pipe_count > 10 || r->ctl_count > 8 || r->mixer_count > (canoe ? 8 : 6))
 +        return CR_BUS_INVALID;
 +    unsigned ids = 0;
 +    for (unsigned p = 0; p < r->pipe_count; ++p) {
-+        if (r->pipe_id[p] > (canoe ? 9 : 7) || (ids & (1U << r->pipe_id[p])) ||
++        if (r->pipe_id[p] > 9 || (ids & (1U << r->pipe_id[p])) ||
 +            (r->pipe[p] & 3) || !within(0, r->size, r->pipe[p], r->sspp_rec_separated ? 0x1078 : 0x174) ||
 +            (r->sspp_rec_separated && (uint64_t)r->pipe[p] + 0x1077 > UINT32_MAX)) return CR_BUS_INVALID;
 +        ids |= 1U << r->pipe_id[p];
