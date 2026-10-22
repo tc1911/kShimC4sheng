@@ -42,7 +42,8 @@
  *   - DEVICE_SOC_SM8750: "qcom,sun", "qcom,sunp" or "qcom,sm8750".
  *   - DEVICE_SOC_SM8850: "qcom,canoe", "qcom,canoep", "qcom,kaanapali" or
  *     "qcom,sm8850".
- * Entries from both groups leave the SoC UNKNOWN.
+ *   - DEVICE_SOC_SM8550: "qcom,sm8550".
+ * Entries from more than one group leave the SoC UNKNOWN.
  *
  * The compatible field preserves the original root compatible list verbatim
  * as a NUL-separated list: whole entries are copied while they fit and
@@ -74,6 +75,7 @@ enum device_soc {
     DEVICE_SOC_UNKNOWN = 0,
     DEVICE_SOC_SM8750,
     DEVICE_SOC_SM8850,
+    DEVICE_SOC_SM8550,
 };
 
 struct device_info {

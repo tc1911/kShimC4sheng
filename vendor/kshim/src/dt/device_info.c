@@ -155,7 +155,7 @@ void device_info_read(const void *validated_fdt, struct device_info *info)
     const char *model, *compatible;
     int compat_len, off, rc;
     size_t cap, used;
-    bool truncated, tb322, tb323, soc8750, soc8850;
+    bool truncated, tb322, tb323, soc8750, soc8850, soc8550;
     uint64_t ram = 0;
 
     if (!info)
@@ -207,6 +207,7 @@ void device_info_read(const void *validated_fdt, struct device_info *info)
                   list_contains(compatible, compat_len, "qcom,canoep") ||
                   list_contains(compatible, compat_len, "qcom,kaanapali") ||
                   list_contains(compatible, compat_len, "qcom,sm8850");
+        soc8550 = list_contains(compatible, compat_len, "qcom,sm8550");
 
         /* The trusted Linux reference pairing (elden + sm8750) is unchanged.
          * A stock TB322FC is additionally accepted from the measured .096
@@ -235,8 +236,9 @@ void device_info_read(const void *validated_fdt, struct device_info *info)
         if (tb322 != tb323)
             info->board = tb322 ? DEVICE_BOARD_TB322FC : DEVICE_BOARD_TB323FU;
 
-        if (soc8750 != soc8850)
-            info->soc = soc8750 ? DEVICE_SOC_SM8750 : DEVICE_SOC_SM8850;
+        if ((soc8750 ? 1 : 0) + (soc8850 ? 1 : 0) + (soc8550 ? 1 : 0) == 1)
+            info->soc = soc8750 ? DEVICE_SOC_SM8750 :
+                        soc8850 ? DEVICE_SOC_SM8850 : DEVICE_SOC_SM8550;
     }
 
     rc = memory_total(validated_fdt, &ram);

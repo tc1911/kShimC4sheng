@@ -769,6 +769,7 @@ static int menu_fill_device_info(struct menu_selection *menu)
     snprintf(menu->info_values[1], sizeof(menu->info_values[1]), "%s",
              info->soc == DEVICE_SOC_SM8750 ? "SM8750" :
              info->soc == DEVICE_SOC_SM8850 ? "SM8850" :
+             info->soc == DEVICE_SOC_SM8550 ? "SM8550" :
              kshim_menu_text(KSHIM_TEXT_UNKNOWN));
 
     /* Original DT model, bounded to a readable length on a UTF-8 boundary with
