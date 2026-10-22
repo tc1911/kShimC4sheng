@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bootimg  # noqa: E402
@@ -251,6 +252,15 @@ def main():
     if stock["version"] not in (3, 4):
         die("expected a GKI boot v3/v4 stock image, got v%d" % stock["version"])
     linux_image = read(args.linux_image, "Linux Image")
+    if linux_image[:2] == b"\x1f\x8b":
+        # Accept a kernel-build Image.gz directly; --dtb is still explicit.
+        try:
+            d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            linux_image = d.decompress(linux_image) + d.flush()
+        except zlib.error as e:
+            die("cannot decompress Linux Image.gz: %s" % e)
+        if not d.eof:
+            die("truncated gzip stream in Linux Image.gz")
     try:
         bootimg.assert_raw_arm64_image(linux_image, "Linux Image")
     except bootimg.BootImageError as e:

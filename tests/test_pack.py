@@ -109,11 +109,14 @@ class PackTest(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("exceeds partition budget", p.stderr)
 
-    def test_rejects_gzip_linux_image(self):
-        open(self.linux, "wb").write(helpers.gzip_bytes(helpers.make_image()))
+    def test_accepts_gzip_linux_image(self):
+        raw = helpers.make_image()
+        open(self.linux, "wb").write(helpers.gzip_bytes(raw))
         p = self.build()
-        self.assertNotEqual(p.returncode, 0)
-        self.assertIn("gzip", p.stderr)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        _, m = self.load()
+        linux = [e for e in m["entries"] if e["name"] == "Linux"][0]
+        self.assertEqual(linux["size"], len(raw))
 
 
 if __name__ == "__main__":

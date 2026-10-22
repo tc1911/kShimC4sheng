@@ -98,6 +98,8 @@ scripts/make-boot.sh \
 - **不需要交叉编译器**：默认复用仓库里的 `prebuilt/sheng-runtime.bin`
   （4 MiB，sha256 `d8e1becb…`）。只有改菜单/配置时才需要重建 runtime。
 - `--stock-boot` 可以是整块 `boot_a` 分区 dump，也可以是裁剪过的 boot 镜像。
+- `--linux-image` 支持未压缩的 ARM64 `Image`，也支持内核构建直接产出的
+  `Image.gz`（会自动解压）。
 - 输出会保留原厂 boot 头版本与分区大小，并检查不超 192 MiB。
 
 ## 快速开始（完整流程）
