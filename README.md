@@ -13,9 +13,10 @@
 菜单默认 8 秒后进 Android，音量键选择、电源键确认（sheng 的触屏驱动未适配，
 与两代 Y700 一样只用按键）。
 
-> 状态：**打包链路已用真实载荷验证，尚未上机**。runtime 需要按
-> `docs/bringup-plan.md` 准备交叉编译依赖后构建；上机前请先读
-> `docs/troubleshooting.md` 的救砖部分。
+> 状态：**打包链路已用真实载荷验证，runtime 已成功构建，尚未上机**。
+> 合成 stock 镜像 + Armada 真实 Linux 载荷产出 99,643,392 B（192 MiB 分区，
+> 剩余 101,683,200 B）；`UnpackTool` 能完整还原 Android/Linux/DTB/initrd/shim。
+> 上机前请先读 `docs/troubleshooting.md` 的救砖部分。
 
 ## 为什么放在 boot_a
 
@@ -43,7 +44,8 @@ scripts/
   prepare.sh       提取 stock 内核 + Linux 载荷
   build.sh         生成 out/boot_a.img
   build_runtime.sh 构建 4 MiB kShimC runtime
-  fetch_deps.sh    拉取 CrDK/picolibc/LVGL/libfdt（需网络）
+  fetch_deps.sh    拉取 CrDK/picolibc/LVGL/libfdt（GitHub 镜像，需网络）
+  fetch_toolchain.sh 在本机解包 aarch64 交叉工具链（Arch，无需 root）
   backup.sh        通过 adb 备份 boot/dtbo/init_boot/vendor_boot
   flash.sh         刷 boot_a
 vendor/
@@ -64,10 +66,9 @@ scripts/prepare.sh \
   --distro-boot debian-sheng-boot.img \
   --out out/payload
 
-# 2. 构建 runtime（先按 docs/bringup-plan.md 备好依赖）
+# 2. 构建 runtime（Arch/CachyOS 可自动装工具链，其他发行版装 aarch64-linux-gnu-gcc）
+scripts/fetch_toolchain.sh
 scripts/fetch_deps.sh
-python3 -m venv build/venv && build/venv/bin/pip install kconfiglib
-export PATH="$PWD/build/venv/bin:$PATH"
 scripts/build_runtime.sh
 
 # 3. 打包
@@ -80,7 +81,8 @@ scripts/flash.sh -y
 
 没有 `aarch64-linux-gnu-gcc` 时，runtime 也可以在任意装了该交叉编译器的
 容器/发行版里构建，只要把产物放到 `out/runtime.bin`。打包阶段只需要
-`out/runtime.bin`，不需要重新编译 runtime。
+`out/runtime.bin`，不需要重新编译 runtime。本次构建产物：
+4,194,304 B，sha256 `b97cbe7c90842dd33e71f6bc3f9b27d37ab9c0c714d9ced2374ae86ef2f8c3b8`。
 
 ## 迁移步骤（从现有双系统）
 

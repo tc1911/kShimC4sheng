@@ -20,9 +20,14 @@ elseif(UNIX)
 #    set(TARGET_TOOLCHAIN_PREFIX "/usr/bin/aarch64-none-elf-")
 #    set(CMAKE_C_COMPILER "/usr/bin/aarch64-none-elf-gcc")
 #    set(CMAKE_OBJCOPY "/usr/bin/aarch64-none-elf-objcopy")
-    set(TARGET_TOOLCHAIN_PREFIX "/usr/bin/aarch64-linux-gnu-")
-    set(CMAKE_C_COMPILER "/usr/bin/aarch64-linux-gnu-gcc")
-    set(CMAKE_OBJCOPY "/usr/bin/aarch64-linux-gnu-objcopy")
+    # kShimC4sheng: allow an unpacked cross toolchain (see scripts/fetch_toolchain.sh).
+    if(DEFINED ENV{KSHIM_TOOLCHAIN_PREFIX} AND NOT "$ENV{KSHIM_TOOLCHAIN_PREFIX}" STREQUAL "")
+        set(TARGET_TOOLCHAIN_PREFIX "$ENV{KSHIM_TOOLCHAIN_PREFIX}")
+    else()
+        set(TARGET_TOOLCHAIN_PREFIX "/usr/bin/aarch64-linux-gnu-")
+    endif()
+    set(CMAKE_C_COMPILER "${TARGET_TOOLCHAIN_PREFIX}gcc")
+    set(CMAKE_OBJCOPY "${TARGET_TOOLCHAIN_PREFIX}objcopy")
 endif()
 
 # If host system is linux and `tput colors` reports less than 256, switch to aquatic style.

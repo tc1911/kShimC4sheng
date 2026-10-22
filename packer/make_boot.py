@@ -212,6 +212,11 @@ def main():
     ap.add_argument("--pad-to", type=int, help="pad the boot image to this size")
     ap.add_argument("--keep-work", action="store_true")
     args = ap.parse_args()
+    for name in ("stock_boot", "linux_image", "dtb", "initrd", "runtime",
+                 "packer", "out", "work"):
+        value = getattr(args, name)
+        if value:
+            setattr(args, name, os.path.abspath(value))
 
     args.default_section = "Image-00" if args.default == "android" else "Image-01"
     if not os.path.exists(args.packer):

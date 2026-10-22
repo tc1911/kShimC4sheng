@@ -16,20 +16,16 @@ make packer
 make test          # 8 个合成镜像回归
 ```
 
-runtime 依赖（需要网络）：
+runtime 依赖：
 
 ```sh
-scripts/fetch_deps.sh
-python3 -m venv build/venv
-build/venv/bin/pip install kconfiglib
-export PATH="$PWD/build/venv/bin:$PATH"
+scripts/fetch_toolchain.sh   # Arch/CachyOS：解包 aarch64-linux-gnu-gcc 到 build/toolchain
+scripts/fetch_deps.sh        # CrDK / picolibc / LVGL / libfdt（走 GitHub 镜像）
+scripts/build_runtime.sh     # cmake+ninja；本机 kconfiglib 自动复用 /opt/klipper
 ```
 
-还需要 `aarch64-linux-gnu-gcc`、`cmake`、`ninja`，然后：
+其他发行版请先装 `aarch64-linux-gnu-gcc`、`cmake`、`ninja`、`kconfiglib`。
 
-```sh
-scripts/build_runtime.sh
-```
 
 产物必须是 **恰好 4 MiB**，否则 `make_boot.py` 直接拒绝。
 

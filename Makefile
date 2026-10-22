@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 ROOT := $(CURDIR)
 
-.PHONY: all packer prepare runtime test clean
+.PHONY: all packer prepare runtime test clean deps toolchain
 
 all: packer
 
@@ -11,6 +11,12 @@ packer:
 
 runtime:
 	scripts/build_runtime.sh
+
+toolchain:
+	scripts/fetch_toolchain.sh
+
+deps:
+	scripts/fetch_deps.sh
 
 test:
 	python3 -m unittest discover -s tests -v

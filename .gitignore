@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 *.img
 *.bin
+vendor/kshim/lib/CrDK/
+vendor/kshim/lib/picolibc/
+vendor/kshim/third_party/lvgl/

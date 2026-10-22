@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Evaluate one Kconfig tree once for CMake source selection and C headers."""
 import argparse
+import re
 from pathlib import Path
 import kconfiglib
 p = argparse.ArgumentParser(description=__doc__)
@@ -16,6 +17,9 @@ else:
     k.write_config(str(a.config))
 a.header.parent.mkdir(parents=True, exist_ok=True)
 k.write_autoconf(str(a.header))
+# Disabled hex symbols are emitted as '0x' (kconfiglib); make them valid C.
+text = a.header.read_text()
+a.header.write_text(re.sub(r'(?m)^(#define \S+) 0x$', r'\1 0', text))
 lines = []
 for name, sym in sorted(k.syms.items()):
     if not sym.nodes:
