@@ -1170,14 +1170,21 @@ static int menu_fill_settings(struct menu_selection *menu)
      * resolves to its unique candidate; none or several keep the row visible
      * but unavailable. Android/BASE are never board-filtered. */
     {
+#if defined(CONFIG_KSHIM_MENU_SINGLE_LINUX) && CONFIG_KSHIM_MENU_SINGLE_LINUX
+        static const kshim_menu_role_t fixed_roles[] = {KSHIM_MENU_ROLE_ANDROID};
+        static const enum boot_default_target fixed_targets[] = {BOOT_TARGET_ANDROID};
+        const size_t fixed_count = 1;
+#else
         static const kshim_menu_role_t fixed_roles[3] = {
             KSHIM_MENU_ROLE_ANDROID, KSHIM_MENU_ROLE_INTERNAL, KSHIM_MENU_ROLE_TF};
         static const enum boot_default_target fixed_targets[3] = {
             BOOT_TARGET_ANDROID, BOOT_TARGET_INTERNAL, BOOT_TARGET_TF};
+        const size_t fixed_count = 3;
+#endif
         size_t first_usable = KSHIM_MENU_MAX_ENTRIES, slot;
         int usable = 0;
 
-        for (slot = 0; slot < 3; ++slot) {
+        for (slot = 0; slot < fixed_count; ++slot) {
             size_t row = menu->pages[MENU_PAGE_MAIN].count;
             if (settings_append_system(menu, fixed_roles[slot], fixed_targets[slot], &usable))
                 return -1;
@@ -1334,14 +1341,21 @@ static int menu_fill_settings(struct menu_selection *menu)
      * when its target resolves to a unique candidate; otherwise it stays
      * visible but unavailable, exactly like the main system rows. */
     {
+#if defined(CONFIG_KSHIM_MENU_SINGLE_LINUX) && CONFIG_KSHIM_MENU_SINGLE_LINUX
+        static const kshim_menu_role_t default_roles[] = {KSHIM_MENU_ROLE_ANDROID};
+        static const enum boot_default_target default_targets[] = {BOOT_TARGET_ANDROID};
+        const size_t default_count = 1;
+#else
         static const kshim_menu_role_t default_roles[3] = {
             KSHIM_MENU_ROLE_ANDROID, KSHIM_MENU_ROLE_INTERNAL, KSHIM_MENU_ROLE_TF};
         static const enum boot_default_target default_targets[3] = {
             BOOT_TARGET_ANDROID, BOOT_TARGET_INTERNAL, BOOT_TARGET_TF};
+        const size_t default_count = 3;
+#endif
         struct menu_page *page = &menu->pages[MENU_PAGE_DEFAULT];
         size_t caller = 0, slot;
 
-        for (slot = 0; slot < 3; ++slot) {
+        for (slot = 0; slot < default_count; ++slot) {
             const char *name = kshim_menu_role_name(default_roles[slot], NULL);
             if (settings_system_caller(menu, default_targets[slot], &caller)) {
                 if (menu_append(page, name,

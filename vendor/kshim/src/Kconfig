@@ -134,6 +134,16 @@ menu "Framebuffer and UI"
             settings are not persistent, are never written to UFS or any
             other storage, and reset on the next boot.
 
+    config KSHIM_MENU_SINGLE_LINUX
+        bool "Single Linux target (hide the internal/TF ArmadaOS rows)"
+        depends on KSHIM_MENU_SESSION_SETTINGS
+        default n
+        help
+            Keep the fixed Android row but omit the synthetic internal-storage
+            and TF-card ArmadaOS rows. The manifest's own Linux row remains the
+            only Linux target, which suits devices with a single Linux
+            partition and no microSD slot.
+
     config KSHIM_MENU_POWER_ACTIONS
         bool "Enable firmware restart and power-off menu actions"
         default n
