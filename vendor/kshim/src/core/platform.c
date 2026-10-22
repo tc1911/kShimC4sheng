@@ -1667,7 +1667,8 @@ static int menu_activate(struct menu_selection *menu, size_t index,
         int result = kshim_qcom_reboot_request(menu->fdt, target);
         *failure = result == KSHIM_QCOM_REBOOT_ROLLBACK_FAILED ?
             KSHIM_STR_RESTORE_FAILED : KSHIM_STR_MODE_FAILED;
-        snprintf(FailureDetail, sizeof(FailureDetail), "%s (%d)", *failure, result);
+        snprintf(FailureDetail, sizeof(FailureDetail), "%s (%d,s%d)", *failure,
+                 result, kshim_qcom_reboot_last_stage);
         *failure = FailureDetail;
         printf("%s: %d\n", *failure, result);
         return 0;

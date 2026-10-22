@@ -35,6 +35,8 @@ int kshim_qcom_reboot_request(const void *hardware_fdt,
 /* Weak hardware boundaries allow host tests to observe exact transactions.
  * The default SPMI adapter permits only the DT-selected SDAM byte. */
 void kshim_qcom_reboot_smccc(uint64_t registers[8]);
+/* Last stage reached by kshim_qcom_reboot_request(); diagnostic only. */
+extern int kshim_qcom_reboot_last_stage;
 int kshim_qcom_reboot_spmi_prepare(const struct kshim_qcom_reboot_config *config);
 int kshim_qcom_reboot_spmi_read(const struct kshim_qcom_reboot_config *config,
                               uint8_t *value);

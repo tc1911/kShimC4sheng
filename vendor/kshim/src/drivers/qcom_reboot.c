@@ -22,6 +22,8 @@
 #define SCM_OEM_REBOOT UINT32_C(0xc3000922)
 #define PSCI_RESET2 UINT32_C(0xc4000012)
 
+int kshim_qcom_reboot_last_stage;
+
 static int enabled_ancestors(const void *fdt, int node)
 {
     return dt_available(fdt, node);
@@ -314,13 +316,16 @@ int kshim_qcom_reboot_request(const void *fdt, enum kshim_qcom_reboot_target tar
     uint8_t old_reason = 0, actual_reason;
     int changed_dload = 0, changed_reason = 0;
     int error, rollback_failed = 0, oem_reset = 0;
+    kshim_qcom_reboot_last_stage = 1;
     if ((unsigned)target > KSHIM_QCOM_REBOOT_EDL)
         return KSHIM_QCOM_REBOOT_UNSUPPORTED;
     error = kshim_qcom_reboot_parse(fdt, &c);
     if (error) return error;
+    kshim_qcom_reboot_last_stage = 2;
     /* Query capabilities before changing either reboot cookie. */
     if (kshim_psci_init(fdt) || kshim_psci_conduit() != KSHIM_PSCI_CONDUIT_SMC)
         return KSHIM_QCOM_REBOOT_UNSUPPORTED;
+    kshim_qcom_reboot_last_stage = 3;
     if (!scm_available(UINT32_C(0x02000601)) ||
         !scm_available(UINT32_C(0x02000501)) ||
         !scm_available(UINT32_C(0x02000502)))
@@ -334,7 +339,9 @@ int kshim_qcom_reboot_request(const void *fdt, enum kshim_qcom_reboot_target tar
                            kshim_psci_features(PSCI_RESET2) != 0))
             return KSHIM_QCOM_REBOOT_UNSUPPORTED;
     }
+    kshim_qcom_reboot_last_stage = 4;
     if (dload_read(&c, &old_dload)) return KSHIM_QCOM_REBOOT_IO_FAILED;
+    kshim_qcom_reboot_last_stage = 5;
     if (target != KSHIM_QCOM_REBOOT_EDL &&
         (kshim_qcom_reboot_spmi_prepare(&c) ||
          kshim_qcom_reboot_spmi_read(&c, &old_reason)))
@@ -343,9 +350,11 @@ int kshim_qcom_reboot_request(const void *fdt, enum kshim_qcom_reboot_target tar
     uint32_t desired_dload = target == KSHIM_QCOM_REBOOT_EDL ? 1U : 0U;
     /* A failed write can still have reached hardware: include it in rollback. */
     changed_dload = 1;
+    kshim_qcom_reboot_last_stage = 6;
     error = dload_write(&c, desired_dload);
     if (error) goto rollback;
     error = KSHIM_QCOM_REBOOT_VERIFY_FAILED;
+    kshim_qcom_reboot_last_stage = 7;
     if (dload_read(&c, &actual_dload) || actual_dload != desired_dload)
         goto rollback;
     if (target != KSHIM_QCOM_REBOOT_EDL) {
@@ -354,11 +363,14 @@ int kshim_qcom_reboot_request(const void *fdt, enum kshim_qcom_reboot_target tar
                           (uint8_t)(reason << c.reason_shift);
         changed_reason = 1;
         error = KSHIM_QCOM_REBOOT_IO_FAILED;
+        kshim_qcom_reboot_last_stage = 8;
         if (kshim_qcom_reboot_spmi_write(&c, desired)) goto rollback;
         error = KSHIM_QCOM_REBOOT_VERIFY_FAILED;
+        kshim_qcom_reboot_last_stage = 9;
         if (kshim_qcom_reboot_spmi_read(&c, &actual_reason) || actual_reason != desired)
             goto rollback;
     }
+    kshim_qcom_reboot_last_stage = 10;
     barrier();
     if (target == KSHIM_QCOM_REBOOT_EDL) {
         if (oem_reset)
