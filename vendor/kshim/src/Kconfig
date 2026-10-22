@@ -23,17 +23,17 @@ config KSHIM_DIAG_PAINT
       solid colour for five seconds, then continue.  A red screen proves
       that the framebuffer address/stride/format are correct.
 
-config KSHIM_DIAG_FORCE_FB
+config KSHIM_SPLASH_FALLBACK
     bool "Use the continuous splash reservation as the menu framebuffer"
     default n
     help
-      Diagnostic only: when the SDE routing decoder cannot describe the
+      When the SDE routing decoder cannot describe the
       bootloader scanout, fall back to the DT splash reservation with a
-      fixed 3048x2032 XRGB8888 geometry.
+      fixed 3048x2032 XRGB8888 geometry (sheng SM8550).
 
-config KSHIM_DIAG_FB_STRIDE
-    int "Diagnostic framebuffer stride in bytes"
-    depends on KSHIM_DIAG_FORCE_FB
+config KSHIM_SPLASH_FALLBACK_STRIDE
+    int "Splash-fallback framebuffer stride in bytes"
+    depends on KSHIM_SPLASH_FALLBACK
     default 12192
 
 config KSHIM_QCOM_REBOOT

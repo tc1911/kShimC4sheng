@@ -7,7 +7,8 @@ CONFIG_QCOM_KEY_DEBOUNCE_SAMPLES=2
 # CONFIG_KSHIM_QEMU_PLATFORM is not set
 CONFIG_KSHIM_FRAMEBUFFER=y
 CONFIG_KSHIM_LVGL=y
-# Rotate UI pixels counterclockwise. 270 matches the Y700; verify on sheng.
+# sheng's panel is landscape; 270 would make the logical canvas portrait and
+# force STAR_CHART into its compact fallback.
 CONFIG_KSHIM_UI_ROTATION_CCW=0
 CONFIG_KSHIM_MENU_ENTRY_DURATION_MS=0
 # 20 logical 3048-pixel rows (3048 * 4 * 20); fits the 4 MiB runtime slot.
@@ -29,3 +30,8 @@ CONFIG_KSHIM_MENU_POWER_ACTIONS=y
 CONFIG_KSHIM_MENU_ADVANCED_ACTIONS=y
 CONFIG_KSHIM_QCOM_REBOOT=y
 # CONFIG_KSHIM_BOOT_TIMING is not set
+
+# Fall back to the DT splash reservation when the SDE decoder rejects the
+# SM8550 10-SSPP tree.
+CONFIG_KSHIM_SPLASH_FALLBACK=y
+CONFIG_KSHIM_SPLASH_FALLBACK_STRIDE=12192
