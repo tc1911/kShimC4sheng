@@ -75,10 +75,23 @@ scripts/build_runtime.sh
 # 3. 打包
 scripts/build.sh --payload out/payload --runtime out/runtime.bin --out out/boot_a.img
 
-# 4. 备份 + 刷入
+# 4. 先一次性启动测试（不写 flash，失败自动回到原启动）
+scripts/test_boot.sh
+
+# 当前在 B 槽 / dtbo_b 已擦除时，先做一个 Linux 默认项的镜像再测菜单：
+scripts/build.sh --payload out/payload --runtime out/runtime.bin \
+                 --default linux --out out/boot_test.img
+scripts/test_boot.sh --image out/boot_test.img
+
+# 5. 备份 + 刷入
 scripts/backup.sh
 scripts/flash.sh -y
 ```
+
+`fastboot boot` 是 ABL 的一次性加载：不写 `boot_a`，崩溃/重启就回到原来的
+启动链。注意它和正常启动的 `init_boot`/`vendor_boot`/bootconfig 加载路径
+可能不同，**Android 条目最终要以刷入后的行为为准**；Linux 条目用的是内嵌
+DTB + initrd，更适合用这种方式先验证菜单和 Linux 启动。
 
 没有 `aarch64-linux-gnu-gcc` 时，runtime 也可以在任意装了该交叉编译器的
 容器/发行版里构建，只要把产物放到 `out/runtime.bin`。打包阶段只需要
