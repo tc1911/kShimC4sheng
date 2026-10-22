@@ -164,6 +164,11 @@ DTB + initrd，更适合用这种方式先验证菜单和 Linux 启动。
 - 解锁 bootloader 是前提；sheng 的 EDL 恢复需要小米 service account。
 - 本项目不修改 `super`、`userdata`、`linux` 分区，只写 `boot_a`。
 
+## 许可证
+
+本项目按 **GPL-3.0** 发布（继承自 kShimC）。第三方组件和生成的 boot 镜像
+注意事项见 [`LICENSES.md`](LICENSES.md)。
+
 ## 测试
 
 ```sh
