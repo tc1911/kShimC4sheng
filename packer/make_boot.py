@@ -105,16 +105,18 @@ def write_config(path, args, staged):
         "Type = Linux",
         "BaseImage = false",
         "Align = 21",
-        "DeviceTreeBlob = Image-02",
-        "",
-        "[Image-02]",
-        "Name = sheng-dtb",
-        "Path = %s" % staged["dtb"],
-        "Type = DTB",
-        "BaseImage = false",
-        "Align = 3",
-        "",
     ]
+    if staged.get("dtb"):
+        blocks += ["DeviceTreeBlob = Image-02", ""]
+        blocks += [
+            "[Image-02]",
+            "Name = sheng-dtb",
+            "Path = %s" % staged["dtb"],
+            "Type = DTB",
+            "BaseImage = false",
+            "Align = 3",
+            "",
+        ]
     if staged.get("initrd"):
         blocks += [
             "[Image-03]",
@@ -148,7 +150,9 @@ def verify(packed, stock, staged, args):
         die("stock kernel header slots 0x20/0x28/0x30 are not zero; "
             "extract the kernel from a factory boot image")
 
-    exp = ["Android", "Linux", "sheng-dtb"]
+    exp = ["Android", "Linux"]
+    if staged.get("dtb"):
+        exp.append("sheng-dtb")
     if staged.get("initrd"):
         exp.append("initrd")
     names = [e["name"] for e in m["entries"]]
@@ -157,24 +161,30 @@ def verify(packed, stock, staged, args):
     if len(m["entries"]) != len(exp) + 1:
         die("expected %d entries (incl. Shim), got %d" % (len(exp) + 1, len(m["entries"])))
 
-    android, linux, dtb = m["entries"][:3]
+    android, linux = m["entries"][:2]
     if android["type_name"] != "Linux" or "BASE_IMAGE" not in android["flag_names"]:
         die("entry 0 is not a Linux base image")
     if "EXECUTABLE" not in android["flag_names"]:
         die("entry 0 is not executable")
-    if linux["type_name"] != "Linux" or "HAS_DTB" not in linux["flag_names"]:
-        die("entry 1 is not a Linux image with a DTB")
-    if linux["dtb_entry"] != 2:
-        die("entry 1 DTB reference %d != 2" % linux["dtb_entry"])
-    if dtb["type_name"] != "DTB":
-        die("entry 2 is not a DTB")
-    if packed[dtb["offset"]:dtb["offset"] + 4] != DTB_MAGIC:
-        die("entry 2 payload is not an FDT")
-    if dtb["size"] != os.path.getsize(staged["dtb"]):
-        die("DTB size mismatch")
+    if linux["type_name"] != "Linux":
+        die("entry 1 is not a Linux image")
+    if staged.get("dtb"):
+        if "HAS_DTB" not in linux["flag_names"]:
+            die("entry 1 has no DTB reference")
+        if linux["dtb_entry"] != 2:
+            die("entry 1 DTB reference %d != 2" % linux["dtb_entry"])
+        dtb_entry = m["entries"][2]
+        if dtb_entry["type_name"] != "DTB":
+            die("entry 2 is not a DTB")
+        if packed[dtb_entry["offset"]:dtb_entry["offset"] + 4] != DTB_MAGIC:
+            die("entry 2 payload is not an FDT")
+        if dtb_entry["size"] != os.path.getsize(staged["dtb"]):
+            die("DTB size mismatch")
+    elif "HAS_DTB" in linux["flag_names"]:
+        die("entry 1 unexpectedly carries a DTB")
     if staged.get("initrd"):
-        initrd = m["entries"][3]
-        if initrd["type_name"] != "Blob" or initrd["size"] != os.path.getsize(staged["initrd"]):
+        initrd_entry = m["entries"][len(exp) - 1]
+        if initrd_entry["type_name"] != "Blob" or initrd_entry["size"] != os.path.getsize(staged["initrd"]):
             die("initrd entry mismatch")
 
     shim = m["entries"][-1]
@@ -199,7 +209,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stock-boot", required=True, help="stock boot_a image/dump")
     ap.add_argument("--linux-image", required=True, help="raw ARM64 Linux Image")
-    ap.add_argument("--dtb", required=True, help="sheng DTB")
+    ap.add_argument("--dtb", help="sheng DTB (required unless --no-dtb)")
+    ap.add_argument("--no-dtb", action="store_true",
+                    help="diagnostic: omit the DTB entry and pass the ABL DT through")
     ap.add_argument("--initrd", help="optional initramfs/initrd image")
     ap.add_argument("--runtime", required=True, help="4 MiB kShimC runtime")
     ap.add_argument("--out", required=True, help="output boot image path")
@@ -218,6 +230,12 @@ def main():
         if value:
             setattr(args, name, os.path.abspath(value))
 
+    if args.no_dtb and args.dtb:
+        die("--dtb and --no-dtb are mutually exclusive")
+    if not args.no_dtb and not args.dtb:
+        die("--dtb is required unless --no-dtb")
+    if args.initrd and args.no_dtb:
+        die("--initrd requires a DTB (kshim,initrd-entry lives there)")
     args.default_section = "Image-00" if args.default == "android" else "Image-01"
     if not os.path.exists(args.packer):
         die("packer not built: %s (run packer/build_packer.sh)" % args.packer)
@@ -237,9 +255,11 @@ def main():
         bootimg.assert_raw_arm64_image(linux_image, "Linux Image")
     except bootimg.BootImageError as e:
         die(str(e))
-    dtb = read(args.dtb, "DTB")
-    if dtb[:4] != DTB_MAGIC:
-        die("%s is not a DTB" % args.dtb)
+    dtb = None
+    if args.dtb:
+        dtb = read(args.dtb, "DTB")
+        if dtb[:4] != DTB_MAGIC:
+            die("%s is not a DTB" % args.dtb)
     runtime = read(args.runtime, "runtime")
     if len(runtime) != 4 * 1024 * 1024:
         die("runtime must be exactly 4 MiB, got %d" % len(runtime))
@@ -250,19 +270,21 @@ def main():
     staged = {
         "android": os.path.join(work, "stock-kernel.img"),
         "linux": os.path.join(work, "linux-Image"),
-        "dtb": os.path.join(work, "sheng.dtb"),
         "packed": os.path.join(work, "packed-kernel.bin"),
     }
     for src, dst in ((stock["kernel"], staged["android"]), (linux_image, staged["linux"])):
         with open(dst, "wb") as f:
             f.write(src)
+    if dtb:
+        staged["dtb"] = os.path.join(work, "sheng.dtb")
     if initrd:
         staged["initrd"] = os.path.join(work, "initrd.img")
         with open(staged["initrd"], "wb") as f:
             f.write(initrd)
 
     initrd_index = 3 if initrd else None
-    patch_dtb(args.dtb, staged["dtb"], args.bootargs, initrd_index)
+    if dtb:
+        patch_dtb(args.dtb, staged["dtb"], args.bootargs, initrd_index)
     config = os.path.join(work, "pack.ini")
     write_config(config, args, staged)
 
@@ -298,7 +320,7 @@ def main():
         "sha256": hashlib.sha256(out).hexdigest(),
         "default": args.default,
         "timeout_ms": args.timeout_ms,
-        "bootargs": args.bootargs,
+        "bootargs": args.bootargs if dtb else None,
         "initrd_index": initrd_index,
         "manifest": m,
     }
