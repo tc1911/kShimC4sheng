@@ -15,7 +15,8 @@
 
 > 状态：**打包链路已用真实载荷验证，runtime 已成功构建，尚未上机**。
 > 合成 stock 镜像 + Armada 真实 Linux 载荷产出 99,643,392 B（192 MiB 分区，
-> 剩余 101,683,200 B）；`UnpackTool` 能完整还原 Android/Linux/DTB/initrd/shim。
+> 剩余 101,683,200 B）；40 MB 内核压力测试产出 139,489,280 B（余 61.8 MB）；
+> `UnpackTool` 能完整还原 Android/Linux/DTB/initrd/shim。
 > 上机前请先读 `docs/troubleshooting.md` 的救砖部分。
 
 ## 为什么放在 boot_a
