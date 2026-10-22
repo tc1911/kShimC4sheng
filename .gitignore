@@ -7,3 +7,6 @@ __pycache__/
 vendor/kshim/lib/CrDK/
 vendor/kshim/lib/picolibc/
 vendor/kshim/third_party/lvgl/
+
+# Local test photos
+Screenshot_*.jpg
