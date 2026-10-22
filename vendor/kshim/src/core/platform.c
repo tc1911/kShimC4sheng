@@ -1789,8 +1789,21 @@ static int platform_select(uint64_t fdt, const char *const *names,
     {
         const struct kshim_resources *diag_res = kshim_resources_get();
         if (!diag_res || diag_res->splash_status) {
-            /* Splash decode failed: stop here so the absence of Android is
-             * an unambiguous signal on a black panel. */
+            /* Splash decode failed.  Paint the DT-declared continuous splash
+             * reservation directly: if the bootloader still scans it out, the
+             * panel turns green even though the SDE routing decode did not
+             * work.  Otherwise the display has already stopped scanning. */
+            struct dt_range splash_mem;
+            if (!kshim_dt_splash_reservation((const void *)(uintptr_t)fdt,
+                                             &splash_mem, NULL)) {
+                if (kshim_mmu_is_enabled())
+                    (void)kshim_mmu_add_region(splash_mem.base, splash_mem.size,
+                                               KSHIM_MMU_NORMAL_NC,
+                                               KSHIM_MMU_READ | KSHIM_MMU_WRITE);
+                volatile uint32_t *px = (volatile uint32_t *)(uintptr_t)splash_mem.base;
+                size_t words = splash_mem.size / sizeof(uint32_t);
+                for (size_t i = 0; i < words; ++i) px[i] = 0x0000ff00u;
+            }
             for (;;) __asm__ volatile("wfi");
         }
         kshim_framebuffer_t diag_fb;
