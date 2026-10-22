@@ -18,7 +18,10 @@
 > Recovery/Fastboot、设备信息、设备选择均正常。
 > 当前镜像 `out/boot_a.img` 139,489,280 B，sha256
 > `a26d1de624db5f58baad1f41b61fffa8cf830164f82a3a7868fd3c714c4f2de9`。
-> 尚未持久化刷入 `boot_a`；刷机前请先读 `docs/troubleshooting.md` 的救砖部分。
+> **已持久化刷入 `boot_a` 并验证重启后菜单仍在**（2026-10-23，A 槽）。
+> 刷机前备份在 `out/backup/`（boot_a/boot_b 同为 `ef558db2…`，
+> dtbo_a/dtbo_b 同为 `72eedcca…`）；回滚：
+> `fastboot flash boot_a out/backup/boot_a.img`。
 
 ## 已验证 / sheng 适配要点
 
