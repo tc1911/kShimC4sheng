@@ -13,11 +13,26 @@
 菜单默认 8 秒后进 Android，音量键选择、电源键确认（sheng 的触屏驱动未适配，
 与两代 Y700 一样只用按键）。
 
-> 状态：**打包链路已用真实载荷验证，runtime 已成功构建，尚未上机**。
-> 合成 stock 镜像 + Armada 真实 Linux 载荷产出 99,643,392 B（192 MiB 分区，
-> 剩余 101,683,200 B）；40 MB 内核压力测试产出 139,489,280 B（余 61.8 MB）；
-> `UnpackTool` 能完整还原 Android/Linux/DTB/initrd/shim。
-> 上机前请先读 `docs/troubleshooting.md` 的救砖部分。
+> 状态：**已在真机（sheng，A 槽）通过 `fastboot boot` 验证**。
+> 菜单 7 项、音量键/电源键、Android 原厂启动、高级启动里的
+> Recovery/Fastboot、设备信息、设备选择均正常。
+> 当前镜像 `out/boot_a.img` 139,489,280 B，sha256
+> `a26d1de624db5f58baad1f41b61fffa8cf830164f82a3a7868fd3c714c4f2de9`。
+> 尚未持久化刷入 `boot_a`；刷机前请先读 `docs/troubleshooting.md` 的救砖部分。
+
+## 已验证 / sheng 适配要点
+
+- 菜单：3048×2032 横屏、STAR_CHART 双栏；只列 Android / Linux / 高级启动 /
+  设置 / 设备信息 / 重启 / 关机（`CONFIG_KSHIM_MENU_SINGLE_LINUX`，无 TF 行）。
+- 显示：SM8550 的 SDE 10 SSPP legacy 解码仍失败，改用
+  `CONFIG_KSHIM_SPLASH_FALLBACK`：直接复用 ABL 的 `cont_splash_region`
+  （0xB8000000，stride 12192，XRGB8888）作为扫描缓冲。SDE 路由解码本身尚未修。
+- 按键：`qcom,sm8550-tlmm` + `pmk8550-pwrkey` 直接可用；触屏未适配。
+- 高级启动：SM8550 的 PMIC 仲裁器是 **v7**，原代码只接受 v8/8.5；已放宽到
+  CrDK 支持的 5/7/8/8.5。Recovery/Fastboot 已验证，EDL 未试。
+- 设备信息：ABL DT 根是 `qcom,kalama*` 而非 `qcom,sm8550`，已兼容；
+  内存 7888 MiB（`/memory` 里有一个 size=0 的占位 bank，已跳过）。
+- 设备选择页新增 `Xiaomi Pad 6S Pro (sheng / SM8550)`。
 
 ## 为什么放在 boot_a
 
@@ -96,7 +111,7 @@ DTB + initrd，更适合用这种方式先验证菜单和 Linux 启动。
 没有 `aarch64-linux-gnu-gcc` 时，runtime 也可以在任意装了该交叉编译器的
 容器/发行版里构建，只要把产物放到 `out/runtime.bin`。打包阶段只需要
 `out/runtime.bin`，不需要重新编译 runtime。本次构建产物：
-4,194,304 B，sha256 `b97cbe7c90842dd33e71f6bc3f9b27d37ab9c0c714d9ced2374ae86ef2f8c3b8`。
+4,194,304 B，sha256 `d8e1becbb584d96d1fdf231e33bbf70dd779905c887ce2ea226054877bc7bd73`。
 
 ## 迁移步骤（从现有双系统）
 
@@ -109,8 +124,10 @@ DTB + initrd，更适合用这种方式先验证菜单和 Linux 启动。
 
 ## 已知风险
 
-- **未上机验证**：`splash.c` 只识别 `qcom,sde-kms` 和 `mdp_phys`，SM8550 走
-  legacy 路径，DPU 拓扑（mixer 数、双 LM）与 Y700 不同，菜单可能黑屏。
+- 显示走 forced-framebuffer 回退：直接写 `cont_splash_region`，没有走 SDE
+  路由解码；如果以后 Android 改了 splash 保留区或 ABL 不再保留它，菜单会黑屏。
+- `fastboot boot` 与正常开机在 `init_boot`/`vendor_boot`/bootconfig 的加载路径
+  上可能不同，Android 条目最终以刷入后的行为为准。
 - 触屏不可用（与两代 Y700 一致），只能音量/电源键。
 - Android OTA 覆盖 `boot_a` 后菜单消失。
 - 解锁 bootloader 是前提；sheng 的 EDL 恢复需要小米 service account。
