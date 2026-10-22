@@ -147,6 +147,25 @@ static int resources_init_validated(const void *f)
 #if CONFIG_KSHIM_FRAMEBUFFER
     kshim_mmu_region_t display;
     resources.splash_status = kshim_dt_splash(f, CrIoDefault(), &resources.framebuffer, &display);
+#if CONFIG_KSHIM_DIAG_FORCE_FB
+    if (resources.splash_status) {
+        struct dt_range splash_mem;
+        if (!kshim_dt_splash_reservation(f, &splash_mem, NULL)) {
+            resources.framebuffer = (kshim_framebuffer_config_t){
+                .render_address = splash_mem.base,
+                .width = 3048, .height = 2032,
+                .stride = CONFIG_KSHIM_DIAG_FB_STRIDE,
+                .bpp = 32, .format = KSHIM_FB_FORMAT_XRGB8888,
+                .foreground = 0xffffffffu, .background = 0xff000000u,
+                .buffer_size = (size_t)CONFIG_KSHIM_DIAG_FB_STRIDE * 2032,
+            };
+            display = (kshim_mmu_region_t){splash_mem.base, splash_mem.size,
+                                           KSHIM_MMU_NORMAL_NC,
+                                           KSHIM_MMU_READ | KSHIM_MMU_WRITE};
+            resources.splash_status = 0;
+        }
+    }
+#endif
     if (!resources.splash_status && kshim_resource_map(&resources, display.base, display.size,
             display.type, display.permissions)) return -1;
     if (!resources.splash_status) ui_scratch_from_splash(f, &resources);

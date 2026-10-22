@@ -1816,6 +1816,27 @@ static int platform_select(uint64_t fdt, const char *const *names,
         }
     }
 #endif
+#if CONFIG_KSHIM_DIAG_FORCE_FB
+    {
+        /* Two-colour probe before the menu: red for the first half of the
+         * splash reservation, blue for the second.  If the bootloader scans
+         * from offset 0 the panel is mostly red with a blue strip at the
+         * bottom; an all-blue panel means the active buffer starts in the
+         * second half. */
+        struct dt_range probe_mem;
+        if (!kshim_dt_splash_reservation((const void *)(uintptr_t)fdt,
+                                         &probe_mem, NULL)) {
+            volatile uint32_t *px =
+                (volatile uint32_t *)(uintptr_t)probe_mem.base;
+            size_t words = probe_mem.size / sizeof(uint32_t);
+            size_t half = words / 2;
+            for (size_t i = 0; i < half; ++i) px[i] = 0x00ff0000u;
+            for (size_t i = half; i < words; ++i) px[i] = 0x000000ffu;
+            uint64_t until = get_current_time() + 5000;
+            while (get_current_time() < until) __asm__ volatile("");
+        }
+    }
+#endif
     if (!selected) return -1;
     struct menu_selection menu = {.fdt = (const void *)(uintptr_t)fdt,
                                   .timeout = timeout_ms, .info = info};
