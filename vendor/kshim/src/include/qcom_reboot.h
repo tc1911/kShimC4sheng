@@ -37,6 +37,8 @@ int kshim_qcom_reboot_request(const void *hardware_fdt,
 void kshim_qcom_reboot_smccc(uint64_t registers[8]);
 /* Last stage reached by kshim_qcom_reboot_request(); diagnostic only. */
 extern int kshim_qcom_reboot_last_stage;
+/* Sub-stage inside the SPMI prepare/read/write path. */
+extern int kshim_qcom_reboot_spmi_detail;
 int kshim_qcom_reboot_spmi_prepare(const struct kshim_qcom_reboot_config *config);
 int kshim_qcom_reboot_spmi_read(const struct kshim_qcom_reboot_config *config,
                               uint8_t *value);

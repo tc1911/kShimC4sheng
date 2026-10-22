@@ -23,6 +23,7 @@
 #define PSCI_RESET2 UINT32_C(0xc4000012)
 
 int kshim_qcom_reboot_last_stage;
+int kshim_qcom_reboot_spmi_detail;
 
 static int enabled_ancestors(const void *fdt, int node)
 {
@@ -244,11 +245,13 @@ __attribute__((weak)) int kshim_qcom_reboot_spmi_prepare(
     const struct kshim_qcom_reboot_config *c)
 {
     const struct kshim_resources *resources = kshim_resources_get();
+    kshim_qcom_reboot_spmi_detail = 1;
     memset(&reboot_spmi, 0, sizeof(reboot_spmi));
     if (!resources || resources->fdt != c->fdt || resources->spmi_status ||
         c->controller >= resources->spmi_count)
         return -1;
     const SpmiDeviceContext *source = &resources->spmi[c->controller].controller;
+    kshim_qcom_reboot_spmi_detail = 2;
     if (source->BusId != c->bus) return -1;
     SpmiDeviceContext *ctx = &reboot_spmi.controller;
     memcpy(ctx->Regions, source->Regions, sizeof(ctx->Regions));
@@ -256,8 +259,12 @@ __attribute__((weak)) int kshim_qcom_reboot_spmi_prepare(
     ctx->Channel = source->Channel;
     ctx->BusId = source->BusId;
     ctx->Io = (SpmiIoOps){spmi_mmio_read, spmi_mmio_write, spmi_stall, NULL};
-    if (CR_ERROR(SpmiLibInit(&ctx)) || reboot_spmi.fault ||
-        (ctx->Version != SPMI_ARB_VERSION_8 && ctx->Version != SPMI_ARB_VERSION_8P5))
+    kshim_qcom_reboot_spmi_detail = 3;
+    if (CR_ERROR(SpmiLibInit(&ctx)) || reboot_spmi.fault)
+        return -1;
+    /* SM8550 reports PMIC arbiter v7; CrDK supports 5/7/8/8.5. */
+    kshim_qcom_reboot_spmi_detail = 4;
+    if (ctx->Version == SPMI_ARB_VERSION_UNK || ctx->Version >= SPMI_ARB_VERSION_MAX)
         return -1;
     uint32_t read = ctx->PmicArb.Ops->GetChannelOffset(
         ctx, c->sid, c->reason_address, SPMI_ARB_CHANNEL_OBS);
@@ -265,12 +272,15 @@ __attribute__((weak)) int kshim_qcom_reboot_spmi_prepare(
         ctx, c->sid, c->reason_address, SPMI_ARB_CHANNEL_RW);
     SpmiMemoryRegion *rr = &ctx->Regions[SPMI_MEMORY_REGION_TYPE_OBSERVER];
     SpmiMemoryRegion *wr = &ctx->Regions[SPMI_MEMORY_REGION_TYPE_CH_SLAVES];
+    kshim_qcom_reboot_spmi_detail = 5;
     if (read == UINT32_MAX || write == UINT32_MAX || reboot_spmi.fault ||
         rr->BaseAddress > UINTPTR_MAX - read ||
         wr->BaseAddress > UINTPTR_MAX - write ||
         !region_contains(rr, rr->BaseAddress + read, SPMI_PMIC_ARB_RDATA0 + 4) ||
-        !region_contains(wr, wr->BaseAddress + write, SPMI_PMIC_ARB_WDATA0 + 4))
+        !region_contains(wr, wr->BaseAddress + write, SPMI_PMIC_ARB_WDATA0 + 4)) {
+        kshim_qcom_reboot_spmi_detail = 6;
         return -1;
+    }
     reboot_spmi.read_command = rr->BaseAddress + read + SPMI_PMIC_ARB_CMD;
     reboot_spmi.write_command = wr->BaseAddress + write + SPMI_PMIC_ARB_CMD;
     reboot_spmi.write_data = wr->BaseAddress + write + SPMI_PMIC_ARB_WDATA0;
@@ -290,23 +300,25 @@ static int spmi_matches(const struct kshim_qcom_reboot_config *c)
 __attribute__((weak)) int kshim_qcom_reboot_spmi_read(
     const struct kshim_qcom_reboot_config *c, uint8_t *value)
 {
-    if (!value || !spmi_matches(c)) return -1;
+    if (!value || !spmi_matches(c)) { kshim_qcom_reboot_spmi_detail = 7; return -1; }
     reboot_spmi.fault = 0;
     CR_STATUS status = SpmiRead(&reboot_spmi.controller, c->sid,
                                 c->reason_address, value, 1);
-    return CR_ERROR(status) || reboot_spmi.fault ? -1 : 0;
+    if (CR_ERROR(status) || reboot_spmi.fault) { kshim_qcom_reboot_spmi_detail = 8; return -1; }
+    return 0;
 }
 
 __attribute__((weak)) int kshim_qcom_reboot_spmi_write(
     const struct kshim_qcom_reboot_config *c, uint8_t value)
 {
-    if (!spmi_matches(c)) return -1;
+    if (!spmi_matches(c)) { kshim_qcom_reboot_spmi_detail = 9; return -1; }
     reboot_spmi.fault = 0;
     reboot_spmi.writing = 1;
     CR_STATUS status = SpmiWrite(&reboot_spmi.controller, c->sid,
                                  c->reason_address, &value, 1);
     reboot_spmi.writing = 0;
-    return CR_ERROR(status) || reboot_spmi.fault ? -1 : 0;
+    if (CR_ERROR(status) || reboot_spmi.fault) { kshim_qcom_reboot_spmi_detail = 10; return -1; }
+    return 0;
 }
 
 int kshim_qcom_reboot_request(const void *fdt, enum kshim_qcom_reboot_target target)
