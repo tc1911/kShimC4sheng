@@ -1,0 +1,46 @@
+{
+  "repository": "https://github.com/Project-Aloha/CrDK",
+  "revision": "b6c3335136b7f6b28271917de11e8f11982975fc",
+  "reference": "mu_aloha_platforms/Platforms/CranePkg local worktree, read only, 2026-09-26",
+  "reference_files": {
+    "CranePkg.dec": "668775d65bf28ff209f9585769c29528c0ad6b80597a673fdd727e18ecbd2633",
+    "Driver/ClockCrDxe/ClockCrDxe.c": "899a7cfd3383568bca9d73ab746efcd043ac4d54c91aa093821440bb959952b2",
+    "Driver/GpiCrDxe/GpiCrDxe.c": "578f01c4199e1d6c1cc948851447540cc7389bc40bd14f480f29f8ca48b3e1eb",
+    "Driver/GpiCrDxe/GpiCrDxe.inf": "a4e718e8531b70593c8ff725f49e796fc59af532d2960cdfa339f46e7ed98686",
+    "Driver/I2CCrDxe/I2CCrDxe.c": "b0641366d0a0cc15aa4e776e504c551a49af9e2662f93b6ea0fa2e41dc67210b",
+    "Driver/I2CCrDxe/I2CCrDxe.inf": "2dedb419459ebbc5b09c81eb7ba1d7a392fa63caa1a95471fc01fcf645cfc2ea",
+    "Driver/QUPCrDxe/QUPCrDxe.c": "69505a6d602d6d846763176e4fad2f16a612dd8497664875691a22f580c88129",
+    "Driver/QUPCrDxe/QUPCrDxe.inf": "674b2b8a5aba2b1d9852e48ab10a2ba86315d358221f9b0afab1327bf7e6f8cf",
+    "Driver/RpmhCrDxe/RpmhCrDxe.c": "8acfe0d462c64527dca9e217c1e283acf6919d1d07113b7d8a9c5fa61ae807f2",
+    "Include/CrDalDevice.h": "d8f21021513a426afe802fab47bebd662b3d601e99958eea429c9f853d75e10b",
+    "Include/Library/CrTargetQupLib.h": "8cf3f897e57e002c4433f108d1906174e90c51385c0066b211d829339106c592",
+    "Include/Protocol/EFIClockCrProtocol.h": "b27c977c9c55bdc43eefbc9742d6dad8e1fed7eb54538cbdb2270f1e11aa43f5",
+    "Include/Protocol/EFIGpiCrProtocol.h": "47e244bbf3e76871f4d053bac270dccd962dedc55cbd1261df63eadaf4b1b227",
+    "Include/Protocol/EFII2cCrProtocol.h": "5152b69998808602eaa4ef9e020e047a2f0ab0fc45fdd8573cbf9d6f80fd5e83",
+    "Include/Protocol/EFIQupCrProtocol.h": "04accea33bae680801f9f254a367324b71ff632325176509c39e0ed606e9b762",
+    "Include/Protocol/EFIRpmhCrProtocol.h": "a678f5c12b4ae7f00a784ea53dc4050fa6d443674f503f8afd96ce84fe099885",
+    "Target/Sm8450/CrClockTarget.c": "05abc39e21a37b4a1ced264f6892ca0a0ebc662c95c2aefd8db10c96a0b7e537",
+    "Target/Sm8450/CrQupTarget.c": "7783985238d344691e7e0ee09c69d8cab2ee904fb5a04e3bf8b4f42ae9c97522",
+    "Tests/ClockCrDxeTest.c": "16adefc0ade0f932d31d66a2de7d2e840ef0a1950c388c2939269711f7a95045",
+    "Tests/I2cCrTest.c": "c119037cf16f44f144789165bfb88e8a9a80d382422a4e5d0f4b3cec3abf7824",
+    "Tests/MuBusTestCommon.h": "14b881f0783d9f1e623c014a73e2d5e712ca648f3cdaaf49ab3f8caa93368b8d",
+    "Tests/RpmhCrDxeTest.c": "42a2ff38f654b25d30aa480c1c7d6f1411b7b894f59de22385c55e80c38d8471",
+    "Tests/run_mu_bus_tests.py": "4a3906a7be26ecca1673a72929e64e8dcdf96e953f18f58d82f6244f422836c9",
+    "Tests/GeniPinmuxTest.h": "7185650c8376078106ad655c22317b834336c15cfa7815ac0bbf45376efba8be",
+    "Tests/GeniTestCommon.h": "c2b99f75ab19e9a8a3fc4a7f7a1c772abf5b4e1780aa2e0d3bf16ee3fb2f05e9",
+    "Tests/GpiDmaLifetimeTest.h": "3482199b7447418f888299ec79aa687bea5e72eee445ebabb76825bdf408b76c",
+    "Tests/GpiTransportTest.c": "392c38971536a049edaf57d60bbb8d9e47244cfecfe426470b13bad069bc6c50",
+    "Tests/I2cFifoTransportTest.c": "b0538c98b8bddd24d3565beff4cfbc10767184df8b626a187c3ba63d7968df50",
+    "Tests/run_geni_transport_tests.py": "ba63af0185d3733229c4945b23c1a1d7758d31eb2b44c5f7e4ca9b32b1e55fb8"
+  },
+  "patches": [
+    {
+      "file": "0001-cranepkg-driver-fixes.patch",
+      "sha256": "43d33752f133c4baa99683591032c5acaabf88b91939fe2217cd1713f2aed668"
+    },
+    {
+      "file": "0002-freestanding-resources.patch",
+      "sha256": "1951ca741f750c3ea6cb0f3f129bec8482680f0c3452489c41482bf2656ca230"
+    }
+  ]
+}

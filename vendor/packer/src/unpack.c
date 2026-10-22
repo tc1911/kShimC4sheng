@@ -1,0 +1,509 @@
+#include "image_format.h"
+#include "log.h"
+#include "manifest.h"
+
+#include <stdbool.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
+
+#define UNPACK_PATH_SIZE 4096U
+
+typedef struct {
+  uint8_t             *buffer;
+  size_t               size;
+  size_t               headerOffset;
+  const Manifest      *manifest;
+  const ManifestEntry *entries[MANIFEST_MAX_ENTRIES];
+} PackedImage;
+
+static bool
+join_path(char *result, size_t size, const char *directory, const char *name)
+{
+  int written = snprintf(result, size, "%s/%s", directory, name);
+  return written >= 0 && (size_t)written < size;
+}
+
+static bool make_directory(const char *path)
+{
+  if (mkdir(path, 0777) == 0)
+    return true;
+  return errno == EEXIST;
+}
+
+static bool write_buffer(const char *path, const uint8_t *buffer, size_t size)
+{
+  FileContent file = {
+      .filePath = path, .fileBuffer = (uint8_t *)buffer, .fileSize = size};
+  return write_file_content(&file) == 0;
+}
+
+static bool range_inside(size_t offset, size_t size, size_t limit)
+{
+  return offset <= limit && size <= limit - offset;
+}
+
+static bool ranges_overlap(
+    size_t firstOffset, size_t firstSize, size_t secondOffset,
+    size_t secondSize)
+{
+  return firstOffset < secondOffset + secondSize &&
+         secondOffset < firstOffset + firstSize;
+}
+
+/* A non-base Linux entry that reuses the base payload region exactly. */
+static bool is_base_region_alias(
+    const ManifestEntry *entry, const ManifestEntry *baseEntry)
+{
+  uint32_t allowedFlags =
+      MF_ENTRY_FLAG_EXECUTABLE | MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB;
+  return entry->type == MF_ENTRY_TYPE_LINUX && entry->offset == 0 &&
+         entry->size == baseEntry->size && entry->entryOffset == 4 &&
+         entry->alignment == baseEntry->alignment &&
+         entry->loadAddress == 0 && entry->copySizeMax == 0 &&
+         (entry->flags & MF_ENTRY_FLAG_EXECUTABLE) != 0 &&
+         (entry->flags & ~allowedFlags) == 0;
+}
+
+/*
+ * Returns the earliest canonical source index for a payload alias, or SIZE_MAX
+ * if the entry at 'index' is not an alias.  Index 0 is never an alias.
+ *
+ * Two alias rules are covered:
+ *   - Base-region alias (is_base_region_alias): source is index 0.
+ *   - Nonbase exact-payload alias: a Linux entry with entryOffset 0,
+ *     loadAddress 0, copySizeMax 0, non-zero offset, flags limited to
+ *     EXECUTABLE|HAS_DEVICE_TREE_BLOB, whose offset/size/alignment exactly
+ *     match an earlier entry satisfying the same constraints.
+ *
+ * Returning the earliest match prevents alias chains: the returned index is
+ * always the true packed source, never an intermediate alias.
+ */
+static size_t
+find_payload_alias_source(const PackedImage *packed, size_t index)
+{
+  if (index == 0)
+    return SIZE_MAX;
+
+  const ManifestEntry *entry     = packed->entries[index];
+  const ManifestEntry *baseEntry = packed->entries[0];
+
+  if (is_base_region_alias(entry, baseEntry))
+    return 0;
+
+  uint32_t allowedFlags =
+      MF_ENTRY_FLAG_EXECUTABLE | MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB;
+  if (entry->type != MF_ENTRY_TYPE_LINUX || entry->entryOffset != 0 ||
+      entry->loadAddress != 0 || entry->copySizeMax != 0 ||
+      entry->offset == 0 ||
+      (entry->flags & MF_ENTRY_FLAG_EXECUTABLE) == 0 ||
+      (entry->flags & ~allowedFlags) != 0)
+    return SIZE_MAX;
+
+  for (size_t candidate = 1; candidate < index; candidate++) {
+    const ManifestEntry *other = packed->entries[candidate];
+    if (other->type != MF_ENTRY_TYPE_LINUX || other->entryOffset != 0 ||
+        other->loadAddress != 0 || other->copySizeMax != 0 ||
+        other->offset == 0 ||
+        (other->flags & MF_ENTRY_FLAG_EXECUTABLE) == 0 ||
+        (other->flags & ~allowedFlags) != 0)
+      continue;
+    if (other->offset != entry->offset || other->size != entry->size ||
+        other->alignment != entry->alignment)
+      continue;
+    return candidate;
+  }
+
+  return SIZE_MAX;
+}
+
+static bool write_qc_aboot_header(uint8_t *output, uint64_t size)
+{
+  if (size > UINT32_MAX)
+    return false;
+  memcpy(output, "UNCOMPRESSED_IMG", 16);
+  image_write_le32(output + 0x10, (uint32_t)size);
+  return true;
+}
+
+static bool valid_name(const char *name, uint32_t nameLen)
+{
+  if (nameLen == 0)
+    return false;
+  for (uint32_t index = 0; index < nameLen; index++) {
+    unsigned char character = (unsigned char)name[index];
+    /* Reject control characters and ';', which inih treats as an
+     * inline comment and would truncate the generated config. */
+    if (character < 0x20 || character == 0x7f || character == ';')
+      return false;
+  }
+  return true;
+}
+
+static bool write_name(FILE *file, const ManifestEntry *entry)
+{
+  return fwrite(entry->name, 1, entry->nameLen, file) == entry->nameLen;
+}
+
+static bool load_packed(const char *path, PackedImage *packed)
+{
+  FileContent file = {.filePath = path};
+  if (!get_file_size(&file))
+    return false;
+  packed->buffer = malloc(file.fileSize);
+  if (packed->buffer == NULL)
+    return false;
+  file.fileBuffer = packed->buffer;
+  if (read_file_content(&file) == NULL) {
+    free(packed->buffer);
+    packed->buffer = NULL;
+    return false;
+  }
+  packed->size = file.fileSize;
+
+  FileContent view = {.fileBuffer = packed->buffer, .fileSize = packed->size};
+  Arm64ImageInfo image = {0};
+  if (!image_inspect_arm64_linux(&view, &image)) {
+    log_err("Input is not an ARM64 Linux Image.");
+    return false;
+  }
+  packed->headerOffset = image.headerOffset;
+  if (packed->size - packed->headerOffset < ARM64_LINUX_IMAGE_HEADER_SIZE) {
+    log_err("Input image is truncated.");
+    return false;
+  }
+
+  const uint8_t *header         = packed->buffer + packed->headerOffset;
+  uint64_t       manifestOffset = image_read_le64(header + 0x20);
+  uint64_t       manifestSize   = image_read_le64(header + 0x28);
+  uint64_t       runtimeSize    = image_read_le64(header + 0x10);
+  if (manifestOffset > SIZE_MAX || manifestSize > SIZE_MAX ||
+      runtimeSize != packed->size - packed->headerOffset ||
+      !range_inside(
+          (size_t)manifestOffset, (size_t)manifestSize, (size_t)runtimeSize) ||
+      manifestSize < sizeof(ManifestHeader)) {
+    log_err("Input image has invalid Manifest bounds.");
+    return false;
+  }
+
+  const uint8_t  *manifestBuffer = header + (size_t)manifestOffset;
+  const Manifest *manifest       = (const Manifest *)manifestBuffer;
+  if (manifest->header.magic != MANIFEST_MAGIC ||
+      manifest->header.version.major != MANIFEST_VERSION_MAJOR ||
+      manifest->header.version.minor != MANIFEST_VERSION_MINOR) {
+    log_err("Input image is not a supported reversible image.");
+    return false;
+  }
+  if (manifest->header.entryCount == 0 ||
+      manifest->header.entryCount > MANIFEST_MAX_ENTRIES ||
+      manifest->header.defaultEntry >= manifest->header.entryCount) {
+    log_err("Input image has an invalid Manifest.");
+    return false;
+  }
+
+  size_t entryCount = manifest->header.entryCount;
+  size_t cursor     = sizeof(ManifestHeader);
+  for (size_t index = 0; index < entryCount; index++) {
+    if (!range_inside(cursor, sizeof(ManifestEntry), (size_t)manifestSize)) {
+      log_err("Input image has a truncated Manifest entry.");
+      return false;
+    }
+    const ManifestEntry *entry =
+        (const ManifestEntry *)(manifestBuffer + cursor);
+    size_t recordSize = 0;
+    if (entry->nameLen > UINT32_MAX - sizeof(ManifestEntry) ||
+        !image_align_up(
+            sizeof(ManifestEntry) + (size_t)entry->nameLen,
+            MANIFEST_ENTRY_ALIGNMENT, &recordSize) ||
+        !range_inside(cursor, recordSize, (size_t)manifestSize) ||
+        !valid_name(entry->name, entry->nameLen)) {
+      log_err("Input image has an invalid Manifest entry name.");
+      return false;
+    }
+    packed->entries[index] = entry;
+    cursor += recordSize;
+  }
+  if (cursor != manifestSize) {
+    log_err("Input image has an invalid Manifest size.");
+    return false;
+  }
+
+  uint64_t primarySlotValue = image_read_le64(header + 0x30);
+  if (entryCount < 2 || primarySlotValue == 0 || primarySlotValue > SIZE_MAX) {
+    log_err("Input image has invalid Shim bounds.");
+    return false;
+  }
+  size_t               primarySlot       = (size_t)primarySlotValue;
+  size_t               attachedShimIndex = entryCount - 1;
+  const ManifestEntry *attachedShim = packed->entries[attachedShimIndex];
+  if (manifest->header.defaultEntry == attachedShimIndex ||
+      attachedShim->type != MF_ENTRY_TYPE_SHIM ||
+      attachedShim->flags != MF_ENTRY_FLAG_EXECUTABLE ||
+      attachedShim->offset != primarySlot || attachedShim->size == 0 ||
+      attachedShim->entryOffset != 0) {
+    log_err("Input image has invalid Shim bounds.");
+    return false;
+  }
+  for (size_t index = 0; index < entryCount; index++) {
+    const ManifestEntry *entry = packed->entries[index];
+    if (manifest_entry_type_name(entry->type) == NULL ||
+        entry->offset > SIZE_MAX || entry->size > SIZE_MAX ||
+        !range_inside(
+            (size_t)entry->offset, (size_t)entry->size,
+            (size_t)manifestOffset)) {
+      log_err("Input image has an invalid Manifest entry.");
+      return false;
+    }
+  }
+
+  packed->manifest = manifest;
+
+  const ManifestEntry *baseEntry = packed->entries[0];
+  if (baseEntry->offset != 0 || baseEntry->type != MF_ENTRY_TYPE_LINUX ||
+      (baseEntry->flags &
+       (MF_ENTRY_FLAG_BASE_IMAGE | MF_ENTRY_FLAG_EXECUTABLE)) !=
+          (MF_ENTRY_FLAG_BASE_IMAGE | MF_ENTRY_FLAG_EXECUTABLE) ||
+      (baseEntry->flags &
+       ~(MF_ENTRY_FLAG_BASE_IMAGE | MF_ENTRY_FLAG_EXECUTABLE |
+         MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB)) != 0 ||
+      baseEntry->size < ARM64_LINUX_IMAGE_HEADER_SIZE)
+    return false;
+  size_t attachedShimEnd =
+      (size_t)attachedShim->offset + (size_t)attachedShim->size;
+  for (size_t index = 0; index < entryCount; index++) {
+    const ManifestEntry *entry = packed->entries[index];
+    uint32_t             allowedFlags =
+        index == 0 ? MF_ENTRY_FLAG_BASE_IMAGE | MF_ENTRY_FLAG_EXECUTABLE |
+                         MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB
+                   : MF_ENTRY_FLAG_COPY | MF_ENTRY_FLAG_EXECUTABLE |
+                         MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB |
+                         MF_ENTRY_FLAG_HAS_QC_ABOOT_HEADER;
+    bool copyImage = (entry->flags & MF_ENTRY_FLAG_COPY) != 0;
+    bool executable = (entry->flags & MF_ENTRY_FLAG_EXECUTABLE) != 0;
+    bool hasDtb = (entry->flags & MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB) != 0;
+    bool hasQcAboot =
+        (entry->flags & MF_ENTRY_FLAG_HAS_QC_ABOOT_HEADER) != 0;
+    if ((entry->flags & ~allowedFlags) != 0 ||
+        entry->alignment < MANIFEST_ALIGNMENT_SHIFT_MIN ||
+        entry->alignment > MANIFEST_ALIGNMENT_SHIFT_MAX ||
+        (hasQcAboot && entry->type != MF_ENTRY_TYPE_LINUX) ||
+        (copyImage && (entry->loadAddress == 0 || entry->copySizeMax == 0 ||
+                       entry->size > entry->copySizeMax)) ||
+        (!copyImage && entry->copySizeMax != 0)) {
+      log_err("Input image has invalid Manifest metadata.");
+      return false;
+    }
+    if (executable != manifest_entry_type_is_executable(entry->type)) {
+      log_err("Input image has inconsistent executable metadata.");
+      return false;
+    }
+    if (!hasDtb && entry->deviceTreeBlobEntry != 0) {
+      log_err(
+          "Input image has a stale DeviceTreeBlob "
+          "reference.");
+      return false;
+    }
+    if (hasDtb) {
+      if (!executable || entry->deviceTreeBlobEntry >= entryCount ||
+          packed->entries[entry->deviceTreeBlobEntry]->type !=
+              MF_ENTRY_TYPE_DTB ||
+          packed->entries[entry->deviceTreeBlobEntry]->flags != 0) {
+        log_err(
+            "Input image has an invalid DeviceTreeBlob "
+            "reference.");
+        return false;
+      }
+    }
+    if (index == 0) {
+      if (entry->size > primarySlot)
+        return false;
+      continue;
+    }
+    if (find_payload_alias_source(packed, index) != SIZE_MAX)
+      continue;
+    for (size_t previous = 1; previous < index; previous++) {
+      const ManifestEntry *other = packed->entries[previous];
+      if (ranges_overlap(
+              (size_t)entry->offset, (size_t)entry->size, (size_t)other->offset,
+              (size_t)other->size)) {
+        log_err("Manifest entries overlap.");
+        return false;
+      }
+    }
+    if (index != attachedShimIndex && (size_t)entry->offset < attachedShimEnd)
+      return false;
+  }
+  return true;
+}
+
+static bool restore_files(const PackedImage *packed, const char *directory)
+{
+  char                 path[UNPACK_PATH_SIZE * 2];
+  const Manifest      *manifest          = packed->manifest;
+  size_t               entryCount        = manifest->header.entryCount;
+  size_t               attachedShimIndex = entryCount - 1;
+  const ManifestEntry *attachedShim = packed->entries[attachedShimIndex];
+
+  FileContent base = {0};
+  base.fileSize    = (size_t)packed->entries[0]->size;
+  base.fileBuffer  = malloc(base.fileSize);
+  if (base.fileBuffer == NULL)
+    return false;
+  memcpy(base.fileBuffer, packed->buffer + packed->headerOffset, base.fileSize);
+  image_write_le64(base.fileBuffer, manifest->header.baseImage.instructions);
+  image_write_le64(base.fileBuffer + 0x10, manifest->header.baseImage.imageSize);
+  image_write_le64(
+      base.fileBuffer + 0x20, manifest->header.baseImage.manifestOffset);
+  image_write_le64(
+      base.fileBuffer + 0x28, manifest->header.baseImage.manifestSize);
+  image_write_le64(
+      base.fileBuffer + 0x30, manifest->header.baseImage.shimOffset);
+  {
+    const ManifestEntry *baseEntry = packed->entries[0];
+    uint8_t              prefix[QC_ABOOT_KERNEL_HDR_SIZE];
+    size_t               prefixSize = packed->headerOffset;
+    if (prefixSize > sizeof(prefix) ||
+        (prefixSize != 0 && baseEntry->size > UINT32_MAX) ||
+        !join_path(path, sizeof(path), directory, "BaseImage") ||
+        prefixSize + base.fileSize > SIZE_MAX) {
+      free(base.fileBuffer);
+      return false;
+    }
+    if (prefixSize != 0) {
+      memcpy(prefix, packed->buffer, prefixSize);
+      image_write_le32(prefix + 0x10, (uint32_t)baseEntry->size);
+    }
+    size_t   restoredSize = prefixSize + base.fileSize;
+    uint8_t *restored     = malloc(restoredSize);
+    if (restored == NULL) {
+      free(base.fileBuffer);
+      return false;
+    }
+    memcpy(restored, prefix, prefixSize);
+    memcpy(restored + prefixSize, base.fileBuffer, base.fileSize);
+    bool result = write_buffer(path, restored, restoredSize);
+    free(restored);
+    free(base.fileBuffer);
+    if (!result)
+      return false;
+  }
+
+  if (!join_path(path, sizeof(path), directory, "Shim.bin") ||
+      !write_buffer(
+          path, packed->buffer + packed->headerOffset + attachedShim->offset,
+          (size_t)attachedShim->size))
+    return false;
+
+  for (size_t index = 1; index < attachedShimIndex; index++) {
+    const ManifestEntry *entry    = packed->entries[index];
+    if (find_payload_alias_source(packed, index) != SIZE_MAX)
+      continue;
+    const char          *typeName = manifest_entry_type_name(entry->type);
+    char                 name[64];
+    snprintf(name, sizeof(name), "Image-%02zu-%s", index, typeName);
+    if (!join_path(path, sizeof(path), directory, name))
+      return false;
+    uint8_t prefix[QC_ABOOT_KERNEL_HDR_SIZE];
+    size_t  prefixSize = 0;
+    if (entry->flags & MF_ENTRY_FLAG_HAS_QC_ABOOT_HEADER) {
+      if (!write_qc_aboot_header(prefix, entry->size))
+        return false;
+      prefixSize = QC_ABOOT_KERNEL_HDR_SIZE;
+    }
+    size_t   outputSize = prefixSize + (size_t)entry->size;
+    uint8_t *output     = malloc(outputSize);
+    if (output == NULL)
+      return false;
+    memcpy(output, prefix, prefixSize);
+    memcpy(
+        output + prefixSize,
+        packed->buffer + packed->headerOffset + entry->offset,
+        (size_t)entry->size);
+    bool result = write_buffer(path, output, outputSize);
+    free(output);
+    if (!result)
+      return false;
+  }
+  return true;
+}
+
+static bool write_config(const PackedImage *packed, const char *directory)
+{
+  char path[UNPACK_PATH_SIZE * 2];
+  if (!join_path(path, sizeof(path), directory, "config.cfg"))
+    return false;
+  FILE *file = fopen(path, "w");
+  if (file == NULL)
+    return false;
+
+  const Manifest *manifest = packed->manifest;
+  fprintf(file, "[Pack]\nShim=Shim.bin\nOutput=RepackedKernel\n");
+  fprintf(
+      file, "Default=Image-%02u\nTimeout=%u\n\n", manifest->header.defaultEntry,
+      manifest->header.timeoutMs);
+  for (size_t index = 0; index + 1 < manifest->header.entryCount; index++) {
+    const ManifestEntry *entry    = packed->entries[index];
+    const char          *typeName = manifest_entry_type_name(entry->type);
+    if (fprintf(file, "[Image-%02zu]\nName=", index) < 0 ||
+        !write_name(file, entry) || fputc('\n', file) == EOF) {
+      fclose(file);
+      return false;
+    }
+    if (index == 0) {
+      fprintf(file, "Path=BaseImage\n");
+    } else {
+      size_t aliasSource = find_payload_alias_source(packed, index);
+      if (aliasSource != SIZE_MAX)
+        fprintf(file, "PayloadFrom=Image-%02zu\n", aliasSource);
+      else {
+        char name[64];
+        snprintf(name, sizeof(name), "Image-%02zu-%s", index, typeName);
+        fprintf(file, "Path=%s\n", name);
+      }
+    }
+    fprintf(
+        file, "Type=%s\nBaseImage=%s\nAlign=%llu\n", typeName,
+        index == 0 ? "true" : "false", (unsigned long long)entry->alignment);
+    if (entry->flags & MF_ENTRY_FLAG_COPY)
+      fprintf(
+          file, "CopyTo=0x%llx\nCopySizeMax=0x%llx\n",
+          (unsigned long long)entry->loadAddress,
+          (unsigned long long)entry->copySizeMax);
+    if ((entry->flags & MF_ENTRY_FLAG_EXECUTABLE) && index != 0)
+      fprintf(
+          file, "EntryOffset=0x%llx\n", (unsigned long long)entry->entryOffset);
+    if (entry->flags & MF_ENTRY_FLAG_HAS_DEVICE_TREE_BLOB)
+      fprintf(
+          file, "DeviceTreeBlob=Image-%02llu\n",
+          (unsigned long long)entry->deviceTreeBlobEntry);
+    fprintf(file, "\n");
+  }
+  fprintf(file, "[Manifest]\nType=Manifest\n");
+  return fclose(file) == 0;
+}
+
+int main(int argc, char **argv)
+{
+  if (argc != 3) {
+    log_err("Usage: UnpackTool <PatchedKernel> <OutputDir>");
+    return EINVAL;
+  }
+  PackedImage packed = {0};
+  if (!load_packed(argv[1], &packed)) {
+    free(packed.buffer);
+    return EINVAL;
+  }
+  if (!make_directory(argv[2]) || !restore_files(&packed, argv[2]) ||
+      !write_config(&packed, argv[2])) {
+    log_err("Failed to write unpacked files.");
+    free(packed.buffer);
+    return EINVAL;
+  }
+  log_ok("Kernel image unpacked successfully.");
+  free(packed.buffer);
+  return 0;
+}

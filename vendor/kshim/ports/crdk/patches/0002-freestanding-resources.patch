@@ -1,0 +1,4113 @@
+diff --git a/Crane.dsc.inc b/Crane.dsc.inc
+index 0526ddd..6954850 100644
+--- a/Crane.dsc.inc
++++ b/Crane.dsc.inc
+@@ -8,6 +8,10 @@
+   CrDalLib|CranePkg/Library/CrDalLib/CrDalLib.inf
+   CrDalRegistryLib|CranePkg/Library/CrDalRegistryLib/CrDalRegistryLib.inf
+ 
++  GeniSeLib|CranePkg/Library/GeniSeLib/GeniSeLib.inf
++  QupResourceLib|CranePkg/Library/GeniSeLib/QupResourceLib.inf
++  SplashLib|CranePkg/Library/DisplayLib/SplashLib.inf
++
+   # Generic libraries that interact with oskal
+   CmdDBLib|CranePkg/Library/CmdDBLib/cmddb.inf
+   ClockLib|CranePkg/Library/ClockLib/clock.inf
+diff --git a/CranePkg.dec b/CranePkg.dec
+index 4955d33..da77076 100644
+--- a/CranePkg.dec
++++ b/CranePkg.dec
+@@ -43,3 +43,8 @@
+   # Uint16 Array
+   gCranePkgTokenSpaceGuid.PcdLt9611GpioHigh|{ 0x0 }|VOID*|0x000000001
+   gCranePkgTokenSpaceGuid.PcdLt9611GpioInt|0|UINT16|0x000000002
++
++[LibraryClasses]
++  GeniSeLib|Include/Library/cr_geni.h
++  QupResourceLib|Include/Library/cr_resources.h
++  SplashLib|Include/Library/cr_splash.h
+diff --git a/Driver/I2CCrDxe/I2CCrDxe.c b/Driver/I2CCrDxe/I2CCrDxe.c
+index 11a2be3..09433e7 100644
+--- a/Driver/I2CCrDxe/I2CCrDxe.c
++++ b/Driver/I2CCrDxe/I2CCrDxe.c
+@@ -23,6 +23,7 @@
+ #include <Protocol/EFIGpioCrProtocol.h>
+ #include <Protocol/EFII2cCrProtocol.h>
+ #include <Protocol/EFIQupCrProtocol.h>
++#include <Library/cr_geni.h>
+ 
+ #ifndef BIT
+ #define BIT(_N)  (1U << (_N))
+@@ -51,8 +52,6 @@ STATIC EFI_GUID mHostGpioCrProtocolGuid =
+ #define I2C_CR_MAX_TRANSFER_BYTES     0x00FFFFFFU
+ 
+ /* Linux sm8450 i2c9 / GENI SE1 register contract. */
+-#define I2C_FIFO_INSTANCE             10U
+-#define I2C_FIFO_SE_BASE              0x00A84000ULL
+ #define SE_GENI_STATUS                0x040U
+ #define SE_GENI_IF_DISABLE_RO         0x064U
+ #define SE_GENI_FW_REVISION_RO        0x068U
+@@ -118,16 +117,18 @@ typedef struct {
+   EFI_HANDLE             AliasHandle;
+   EFI_I2C_CR_PROTOCOL     Protocol;
+   volatile UINT32        Busy;
++  CONST CR_TARGET_QUP_FIFO_I2C *FifoTarget;
++  BOOLEAN FifoResourcesReady;
++  struct CrGeni           Fifo;
++  struct CrGeniConfig     FifoConfig;
+   BOOLEAN                 QcomOpenAttempted;
+   EFI_STATUS              QcomOpenStatus;
+ } I2C_CR_INSTANCE;
+ 
+-STATIC BOOLEAN mFifoResourcesReady;
+-STATIC UINT32 mFifoDepth;
+ STATIC EFI_QUP_CR_PROTOCOL *mFifoQup;
+ 
+ STATIC EFI_STATUS
+-I2cCrConfigurePins (VOID)
++I2cCrConfigurePins (I2C_CR_INSTANCE *Instance)
+ {
+   EFI_GPIO_CR_PROTOCOL *Gpio;
+   EFI_STATUS            Status;
+@@ -139,15 +140,13 @@ I2cCrConfigurePins (VOID)
+     DEBUG ((DEBUG_WARN, "I2CCr: GPIO pinmux protocol unavailable: %r\n", Status));
+     return EFI_ERROR (Status) ? Status : EFI_NOT_READY;
+   }
+-  /* Linux pinctrl-sm8450.c puts qup9 in PINGROUP f1 for GPIO32/33;
+-     the function's table index is the TLMM mux selector (1). */
+   for (Index = 0; Index < 2; ++Index) {
+     GpioConfigParams Config;
+     ZeroMem (&Config, sizeof (Config));
+-    Config.PinNumber = (UINT16)(32U + Index);
++    Config.PinNumber = Instance->FifoTarget->Pins[Index];
+     Config.OutputEnable = FALSE;
+-    Config.FunctionSel = GPIO_FUNC_1;
+-    Config.Pull = GPIO_PULL_UP;
++    Config.FunctionSel = Instance->FifoTarget->Mux;
++    Config.Pull = Instance->FifoTarget->Pull;
+     Config.DriveStrength = GPIO_DRIVE_STRENGTH_UNCHANGE;
+     Config.OutputValue = GPIO_VALUE_UNCHANGE;
+     Status = Gpio->ConfigGpio (Gpio, &Config);
+@@ -227,212 +226,39 @@ I2cCrFifoPrepare (
+ {
+   EFI_STATUS             Status;
+   EFI_CLOCK_CR_PROTOCOL *Clock;
+-  UINTN                  Base;
+-  UINT32 Divider;
+-  UINT32 Low;
+-  UINT32 High;
+-  UINT32 Cycle;
+ 
+-  if ((Instance == NULL) || (Instance->Protocol.Instance != I2C_FIFO_INSTANCE)) {
++  if ((Instance == NULL) || (Instance->FifoTarget == NULL)) {
+     return EFI_UNSUPPORTED;
+   }
+   /* Clocks are shared with the GPI backend.  Enable them once, but select
+      FIFO mode on every transaction so a preceding GPI transfer cannot leave
+      GENI in DMA mode. */
+-  if (!mFifoResourcesReady) {
++  if (!Instance->FifoResourcesReady) {
+     Clock = NULL;
+     Status = gBS->LocateProtocol (&gEfiClockCrProtocolGuid, NULL, (VOID **)&Clock);
+     if (EFI_ERROR (Status) || (Clock == NULL) || (Clock->SetClock == NULL)) {
+       return EFI_NOT_READY;
+     }
+-    Status = Clock->SetClock (Clock, "gcc", "gcc_qupv3_wrap_1_m_ahb_clk", 0, TRUE);
++    Status = Clock->SetClock (Clock, (CHAR8 *)Instance->FifoTarget->ClockProvider, (CHAR8 *)Instance->FifoTarget->Clocks[0], 0, TRUE);
+     if (EFI_ERROR (Status)) return Status;
+-    Status = Clock->SetClock (Clock, "gcc", "gcc_qupv3_wrap_1_s_ahb_clk", 0, TRUE);
++    Status = Clock->SetClock (Clock, (CHAR8 *)Instance->FifoTarget->ClockProvider, (CHAR8 *)Instance->FifoTarget->Clocks[1], 0, TRUE);
+     if (EFI_ERROR (Status)) return Status;
+-    Status = Clock->SetClock (Clock, "gcc", "gcc_qupv3_wrap1_s1_clk", 19200000, TRUE);
++    Status = Clock->SetClock (Clock, (CHAR8 *)Instance->FifoTarget->ClockProvider, (CHAR8 *)Instance->FifoTarget->Clocks[2], 19200000, TRUE);
+     if (EFI_ERROR (Status)) return Status;
+   }
+ 
+-  Base = (UINTN)I2C_FIFO_SE_BASE;
+-  if ((MmioRead32 (Base + SE_GENI_STATUS) & BIT (0)) != 0) {
+-    return EFI_NOT_READY;
+-  }
+-  /* Linux geni_i2c_init() requires I2C sequencer firmware and rejects
+-     FIFO mode when the hardware disables that interface.  Clock/pinmux
+-     setup cannot turn a SPI/UART or unloaded sequencer into I2C. */
+-  if (((MmioRead32 (Base + SE_GENI_FW_REVISION_RO) >> 8) & 0xFFU) != 3U) {
+-    DEBUG ((DEBUG_ERROR, "I2CCr: SE1 has no I2C firmware (FW=0x%x)\n",
+-            MmioRead32 (Base + SE_GENI_FW_REVISION_RO)));
+-    return EFI_UNSUPPORTED;
+-  }
+-  if ((MmioRead32 (Base + SE_GENI_IF_DISABLE_RO) & BIT (0)) != 0) {
+-    DEBUG ((DEBUG_ERROR, "I2CCr: SE1 FIFO interface disabled; GPI required\n"));
+-    return EFI_UNSUPPORTED;
+-  }
+-  mFifoDepth = (MmioRead32 (Base + SE_HW_PARAM_0) >> 16) & 0x3FU;
+-  if (mFifoDepth < 2) return EFI_UNSUPPORTED;
+-  Status = I2cCrConfigurePins ();
++  /* Target discovery supplies the mapped SE resource. No physical address or
++   * FIFO implementation is embedded in the transfer path. */
++  Status = I2cCrConfigurePins (Instance);
+   if (EFI_ERROR (Status)) return Status;
+-  /* Linux geni_se_init()/geni_se_select_fifo_mode(): initialize common
+-     GENI and DMA gates before selecting FIFO mode.  The MU endpoint can be
+-     present without a device-config handle, so it may never run this path. */
+-  MmioWrite32 (Base + SE_CGC_CTRL,
+-      MmioRead32 (Base + SE_CGC_CTRL) | 0x7FU);
+-  MmioWrite32 (Base + SE_DMA_GENERAL_CFG,
+-      MmioRead32 (Base + SE_DMA_GENERAL_CFG) | 0x0FU);
+-  MmioWrite32 (Base + SE_OUTPUT_CTRL, 0x7FU);
+-  MmioWrite32 (Base + SE_FORCE_DEFAULT, BIT (0));
+-  /* Linux geni_se_select_fifo_mode() quiesces GPI and clears stale IRQs. */
+-  MmioWrite32 (Base + SE_GSI_EVENT_EN, 0);
+-  MmioWrite32 (Base + SE_IRQ_EN, BIT (0) | BIT (1) | BIT (2) | BIT (3));
+-  MmioWrite32 (Base + SE_M_IRQ_CLEAR, MAX_UINT32);
+-  MmioWrite32 (Base + SE_S_IRQ_CLEAR, MAX_UINT32);
+-  MmioWrite32 (Base + SE_DMA_TX_IRQ_CLEAR, MAX_UINT32);
+-  MmioWrite32 (Base + SE_DMA_RX_IRQ_CLEAR, MAX_UINT32);
+-  MmioWrite32 (Base + SE_DMA_MODE_EN, 0);
+-  MmioWrite32 (Base + SE_TX_WATERMARK, 0);
+-  MmioWrite32 (Base + SE_RX_WATERMARK, mFifoDepth - 1U);
+-  MmioWrite32 (Base + SE_RX_RFR_WATERMARK, mFifoDepth);
+-
+-  /* geni_se_config_packing(8, 4, true, true, true). */
+-  MmioWrite32 (Base + SE_TX_PACKING_CFG0, 0x0007F8FEU);
+-  MmioWrite32 (Base + SE_TX_PACKING_CFG1, 0x000FFEFEU);
+-  MmioWrite32 (Base + SE_RX_PACKING_CFG0, 0x0007F8FEU);
+-  MmioWrite32 (Base + SE_RX_PACKING_CFG1, 0x000FFEFEU);
+-  MmioWrite32 (Base + SE_BYTE_GRAN, 0);
+-  /* Linux geni_i2c_clk_map_19p2mhz. */
+-  if (FrequencyKHz == 100) {
+-    Divider = 7; Cycle = 26; Low = 12; High = 10;
+-  } else if (FrequencyKHz == 400) {
+-    Divider = 2; Cycle = 22; Low = 11; High = 5;
+-  } else {
+-    Divider = 1; Cycle = 18; Low = 8; High = 2;
+-  }
+-  MmioWrite32 (Base + SE_CLK_SEL, 0);
+-  MmioWrite32 (Base + 0x048U, (Divider << 4) | BIT (0));
+-  MmioWrite32 (Base + 0x278U, Cycle | (Low << 10) | (High << 20));
+-  MmioWrite32 (Base + SE_M_IRQ_EN,
+-      SE_M_CMD_DONE | SE_M_CMD_OVERRUN | SE_M_ILLEGAL_CMD |
+-      SE_M_CMD_FAILURE | SE_M_CMD_ABORT | SE_M_GP_IRQ_0 | SE_M_GP_IRQ_1 |
+-      SE_M_GP_IRQ_3 | SE_M_GP_IRQ_4 |
+-      SE_M_RX_FIFO_WATERMARK | SE_M_RX_FIFO_LAST | SE_M_TX_FIFO_WATERMARK);
+-  mFifoResourcesReady = TRUE;
+-  return EFI_SUCCESS;
+-}
+-
+-STATIC EFI_STATUS
+-I2cCrFifoTransaction (
+-  IN  UINT32       SlaveAddress,
+-  IN  UINT32       Command,
+-  IN  UINT32       Parameters,
+-  IN  CONST UINT8 *TxBuffer OPTIONAL,
+-  IN  UINT32       TxLength,
+-  OUT UINT8       *RxBuffer OPTIONAL,
+-  IN  UINT32       RxLength
+-  )
+-{
+-  UINTN  Base;
+-  UINT32 TxWords;
+-  UINT32 TxWord;
+-  UINT32 TxIndex;
+-  UINT32 RxIndex;
+-  UINT32 Elapsed;
+-  UINT32 Status;
+-  UINT32 ErrorStatus;
+-
+-  if ((SlaveAddress > 0x7FU) || (TxLength > I2C_CR_MAX_TRANSFER_BYTES) ||
+-      (RxLength > I2C_CR_MAX_TRANSFER_BYTES) ||
+-      ((TxLength != 0) && (TxBuffer == NULL)) ||
+-      ((RxLength != 0) && (RxBuffer == NULL))) {
+-    return EFI_INVALID_PARAMETER;
+-  }
+-  Base = (UINTN)I2C_FIFO_SE_BASE;
+-  TxWords = (TxLength + 3U) / 4U;
+-  TxIndex = 0;
+-  RxIndex = 0;
+-
+-  MmioWrite32 (Base + SE_M_IRQ_CLEAR, MAX_UINT32);
+-  MmioWrite32 (Base + SE_I2C_TX_LEN, TxLength);
+-  MmioWrite32 (Base + SE_I2C_RX_LEN, RxLength);
+-
+-  MmioWrite32 (Base + SE_M_CMD0,
+-      (Command << 27) | Parameters |
+-      ((SlaveAddress & 0x7FU) << I2C_SLAVE_ADDR_SHIFT));
+-
+-  for (Elapsed = 0; Elapsed < I2C_FIFO_TIMEOUT_US; Elapsed += 10U) {
+-    Status = MmioRead32 (Base + SE_M_IRQ_STATUS);
+-    ErrorStatus = Status & SE_M_I2C_ERROR_MASK;
+-    /* Linux geni_i2c_check_addr_data_nack(): GP_LENGTH zero is an address
+-       NACK; nonzero is a data NACK, which is an error only for writes.
+-       CMD_FAILURE is the summary for that GP cause, so discard it together
+-       with GP_IRQ1 for a read data NACK, retaining every independent error. */
+-    if ((Command == I2C_CMD_READ) && ((Status & SE_M_GP_IRQ_1) != 0) &&
+-        (MmioRead32 (Base + SE_M_GP_LENGTH) != 0)) {
+-      ErrorStatus &= ~(SE_M_GP_IRQ_1 | SE_M_CMD_FAILURE);
+-    }
+-    if (ErrorStatus != 0) {
+-      DEBUG ((DEBUG_ERROR, "I2CCr FIFO: command 0x%x IRQ=0x%x GENI=0x%x\n",
+-              Command, Status, MmioRead32 (Base + SE_GENI_STATUS)));
+-      return EFI_DEVICE_ERROR;
+-    }
+-    if (TxIndex < TxWords) {
+-      UINT32 Used = MmioRead32 (Base + SE_TX_FIFO_STATUS) & SE_TX_FIFO_WC_MASK;
+-      if (Used > mFifoDepth) return EFI_DEVICE_ERROR;
+-      while ((Used < mFifoDepth) && (TxIndex < TxWords)) {
+-        UINT32 Byte;
+-        TxWord = 0;
+-        for (Byte = 0; (Byte < 4) && (TxIndex * 4U + Byte < TxLength); ++Byte)
+-          TxWord |= (UINT32)TxBuffer[TxIndex * 4U + Byte] << (Byte * 8U);
+-        MmioWrite32 (Base + SE_TX_FIFO, TxWord);
+-        ++TxIndex;
+-        ++Used;
+-      }
+-    }
+-    if (RxIndex < RxLength) {
+-      UINT32 RxWords = MmioRead32 (Base + SE_RX_FIFO_STATUS) & SE_RX_FIFO_WC_MASK;
+-      while ((RxWords != 0) && (RxIndex < RxLength)) {
+-        UINT32 Word = MmioRead32 (Base + SE_RX_FIFO);
+-        UINT32 Byte;
+-        for (Byte = 0; (Byte < 4U) && (RxIndex < RxLength); ++Byte) {
+-          RxBuffer[RxIndex++] = (UINT8)(Word >> (Byte * 8U));
+-        }
+-        RxWords--;
+-      }
+-    }
+-    if ((Status & SE_M_CMD_DONE) != 0) {
+-      MmioWrite32 (Base + SE_M_IRQ_CLEAR, Status);
+-      if ((RxIndex != RxLength) || (TxIndex != TxWords)) {
+-        DEBUG ((DEBUG_ERROR, "I2CCr FIFO: short command 0x%x TX=%u/%u RX=%u/%u\n",
+-                Command, TxIndex, TxWords, RxIndex, RxLength));
+-      }
+-      return ((RxIndex == RxLength) && (TxIndex == TxWords)) ?
+-          EFI_SUCCESS : EFI_DEVICE_ERROR;
+-    }
+-    MicroSecondDelay (10);
+-  }
+-  DEBUG ((DEBUG_ERROR, "I2CCr FIFO: command 0x%x timed out IRQ=0x%x GENI=0x%x\n",
+-          Command, Status, MmioRead32 (Base + SE_GENI_STATUS)));
+-  return EFI_TIMEOUT;
+-}
+-
+-STATIC EFI_STATUS
+-I2cCrFifoQuiesce (IN BOOLEAN Failed)
+-{
+-  UINTN Base = (UINTN)I2C_FIFO_SE_BASE;
+-  UINT32 Elapsed;
+-  /* An error after STOP_STRETCH may hold SCL even when CMD_ACTIVE cleared.
+-     Always issue abort on an error, and wait for its acknowledgement. */
+-  if (Failed || ((MmioRead32 (Base + SE_GENI_STATUS) & BIT (0)) != 0)) {
+-    MmioWrite32 (Base + SE_M_IRQ_CLEAR, SE_M_CMD_ABORT);
+-    MmioWrite32 (Base + SE_M_CMD_CTRL, SE_M_GENI_CMD_ABORT);
+-    for (Elapsed = 0; Elapsed < I2C_FIFO_TIMEOUT_US; Elapsed += 10) {
+-      if (((MmioRead32 (Base + SE_M_IRQ_STATUS) & SE_M_CMD_ABORT) != 0) &&
+-          ((MmioRead32 (Base + SE_GENI_STATUS) & BIT (0)) == 0)) break;
+-      MicroSecondDelay (10);
+-    }
+-    if (Elapsed == I2C_FIFO_TIMEOUT_US) return EFI_TIMEOUT;
+-  }
+-  MmioWrite32 (Base + SE_M_IRQ_CLEAR, MAX_UINT32);
++  Instance->FifoConfig.protocol = CR_GENI_I2C;
++  Instance->FifoConfig.source_hz = 19200000;
++  Instance->FifoConfig.speed_hz = FrequencyKHz * 1000;
++  int Result = CrGeniInit (&Instance->Fifo, &Instance->FifoConfig, NULL);
++  if (Result == CR_BUS_UNSUPPORTED) return EFI_UNSUPPORTED;
++  if (Result == CR_BUS_BUSY) return EFI_NOT_READY;
++  if (Result) return EFI_DEVICE_ERROR;
++  Instance->FifoResourcesReady = TRUE;
+   return EFI_SUCCESS;
+ }
+ 
+@@ -458,7 +284,7 @@ I2cCrFifoMuTransfer (
+       (Config->Mode != MU_I2C_MODE_I2C) ||
+       ((Config->BusFrequencyKHz != 100) && (Config->BusFrequencyKHz != 400) &&
+        (Config->BusFrequencyKHz != 1000))) return EFI_UNSUPPORTED;
+-  if (Instance->Protocol.Instance != I2C_FIFO_INSTANCE) return EFI_UNSUPPORTED;
++  if (Instance->FifoTarget == NULL) return EFI_UNSUPPORTED;
+   for (Index = 0; Index < DescriptorCount; ++Index) {
+     UINT32 Flags = Descriptors[Index].Flags;
+     if ((Descriptors[Index].Buffer == NULL) || (Descriptors[Index].Length == 0) ||
+@@ -480,23 +306,21 @@ I2cCrFifoMuTransfer (
+     Status = EFI_NOT_READY;
+     goto Done;
+   }
+-  Status = mFifoQup->AcquireSe (mFifoQup, 1, 1, Instance, QupCrSeFifo);
++  Status = mFifoQup->AcquireSe (mFifoQup, Instance->FifoTarget->Wrapper, Instance->FifoTarget->Engine, Instance, QupCrSeFifo);
+   if (EFI_ERROR (Status)) goto Done;
+   Status = I2cCrFifoPrepare (Instance, Config->BusFrequencyKHz);
+   Prepared = !EFI_ERROR (Status);
+   for (Index = 0; !EFI_ERROR (Status) && (Index < DescriptorCount); ++Index) {
+     BOOLEAN Read = (Descriptors[Index].Flags & MU_I2C_FLAG_READ) != 0;
+-    Status = I2cCrFifoTransaction (
+-        Config->SlaveAddress, Read ? I2C_CMD_READ : I2C_CMD_WRITE,
+-        (Descriptors[Index].Flags & MU_I2C_FLAG_STOP) == 0 ? I2C_STOP_STRETCH : 0,
+-        Read ? NULL : Descriptors[Index].Buffer,
+-        Read ? 0 : Descriptors[Index].Length,
+-        Read ? Descriptors[Index].Buffer : NULL,
+-        Read ? Descriptors[Index].Length : 0);
++    struct CrI2cMessage Message = {Config->SlaveAddress, Read,
++                                    Descriptors[Index].Buffer, Descriptors[Index].Length};
++    int Result = CrGeniI2cStep (&Instance->Fifo, &Message,
++                  (Descriptors[Index].Flags & MU_I2C_FLAG_STOP) != 0, I2C_FIFO_TIMEOUT_US);
++    Status = Result == 0 ? EFI_SUCCESS : Result == CR_BUS_TIMEOUT ? EFI_TIMEOUT : EFI_DEVICE_ERROR;
+     if (!EFI_ERROR (Status)) Total += Descriptors[Index].Length;
+   }
+-  Cleanup = Prepared ? I2cCrFifoQuiesce (EFI_ERROR (Status)) : EFI_SUCCESS;
+-  mFifoQup->ReleaseSe (mFifoQup, 1, 1, Instance, !EFI_ERROR (Cleanup));
++  Cleanup = Prepared && CrGeniQuiesce (&Instance->Fifo) ? EFI_DEVICE_ERROR : EFI_SUCCESS;
++  mFifoQup->ReleaseSe (mFifoQup, Instance->FifoTarget->Wrapper, Instance->FifoTarget->Engine, Instance, !EFI_ERROR (Cleanup));
+   if (EFI_ERROR (Cleanup)) {
+     DEBUG ((DEBUG_ERROR, "I2CCr: quiesce failed %r; SE fenced\n", Cleanup));
+     if (!EFI_ERROR (Status)) Status = Cleanup;
+@@ -722,7 +546,7 @@ I2cCrMuTransfer (
+   Instance = I2cCrInstanceFromProtocol (This);
+   /* Linux i2c9 is explicitly switched into GENI FIFO mode here. */
+   if ((Instance != NULL) && (Instance->Protocol.FifoTransfer != NULL) &&
+-      (Instance->Protocol.Instance == I2C_FIFO_INSTANCE)) {
++      (Instance->FifoTarget != NULL)) {
+     return Instance->Protocol.FifoTransfer (
+         This, Config, Descriptors, DescriptorCount,
+         Callback, Context, Delay, Transferred);
+@@ -872,7 +696,7 @@ I2cCrStartRequest (
+   }
+   if (!EFI_ERROR (Status)) {
+     if ((Instance->Protocol.FifoTransfer != NULL) &&
+-        (Instance->Protocol.Instance == I2C_FIFO_INSTANCE)) {
++        (Instance->FifoTarget != NULL)) {
+       UINT32 Transferred;
+       Transferred = 0;
+       Status = (Event != NULL) ? EFI_UNSUPPORTED : Instance->Protocol.FifoTransfer (
+@@ -994,17 +818,22 @@ I2CCrEntryPoint (
+   {
+     EFI_QUP_CR_PROTOCOL *Qup = NULL;
+     CONST CR_TARGET_QUP_WRAPPER *Wrapper = NULL;
++    CONST CR_TARGET_QUP_CONTEXT *Resources = NULL;
++    CONST CR_TARGET_QUP_FIFO_I2C *Target = NULL;
+     Status = gBS->LocateProtocol (&gEfiQupCrProtocolGuid, NULL, (VOID **)&Qup);
+-    if (!EFI_ERROR (Status) && (Qup != NULL) &&
+-        (Qup->Revision >= EFI_QUP_CR_PROTOCOL_REVISION) &&
+-        (Qup->GetWrapper != NULL) &&
+-        !EFI_ERROR (Qup->GetWrapper (Qup, 1, &Wrapper)) && (Wrapper != NULL) &&
+-        (Wrapper->SerialEngineCount > 1) &&
+-        (Wrapper->SerialEngineBase[1] == I2C_FIFO_SE_BASE)) {
++    if (!EFI_ERROR (Status) && Qup && Qup->Revision >= EFI_QUP_CR_PROTOCOL_REVISION &&
++        Qup->GetContext && !EFI_ERROR (Qup->GetContext (Qup, &Resources)) && Resources &&
++        (Target = Resources->FifoI2c) && Qup->GetWrapper &&
++        !EFI_ERROR (Qup->GetWrapper (Qup, Target->Wrapper, &Wrapper)) && Wrapper &&
++        Target->Engine < Wrapper->SerialEngineCount &&
++        Wrapper->SerialEngineSize >= 0xe34 && Wrapper->SerialEngineBase[Target->Engine]) {
+       mInstances = AllocateZeroPool (sizeof (*mInstances));
+       if (mInstances == NULL) return EFI_OUT_OF_RESOURCES;
++      mInstances->FifoTarget = Target;
++      mInstances->FifoConfig.base = Wrapper->SerialEngineBase[Target->Engine];
++      mInstances->FifoConfig.size = Wrapper->SerialEngineSize;
+       I2cCrInitializeProtocol (&mInstances->Protocol);
+-      mInstances->Protocol.Instance = I2C_FIFO_INSTANCE;
++      mInstances->Protocol.Instance = Target->Instance;
+       mInstances->Protocol.BusFrequencyKHz = I2C_CR_DEFAULT_FREQUENCY_KHZ;
+       mInstances->Protocol.I2cControllerCapabilities = &mI2cCapabilities;
+       Status = gBS->InstallMultipleProtocolInterfaces (
+diff --git a/Driver/I2CCrDxe/I2CCrDxe.inf b/Driver/I2CCrDxe/I2CCrDxe.inf
+index 673e72e..6edf1eb 100644
+--- a/Driver/I2CCrDxe/I2CCrDxe.inf
++++ b/Driver/I2CCrDxe/I2CCrDxe.inf
+@@ -14,6 +14,7 @@
+   CranePkg/CranePkg.dec
+ 
+ [LibraryClasses]
++  GeniSeLib
+   BaseLib
+   BaseMemoryLib
+   DebugLib
+diff --git a/Include/Library/CrTargetQupLib.h b/Include/Library/CrTargetQupLib.h
+index ca7fae0..39f6f82 100644
+--- a/Include/Library/CrTargetQupLib.h
++++ b/Include/Library/CrTargetQupLib.h
+@@ -34,11 +34,21 @@ typedef struct {
+   UINT32 Interrupts[CR_TARGET_GPI_MAX_INTERRUPTS];
+ } CR_TARGET_GPI_CONTROLLER;
+ 
++typedef struct {
++  UINT32 Instance;
++  UINT8 Wrapper, Engine;
++  UINT16 Pins[2];
++  UINT8 Mux, Pull;
++  CONST CHAR8 *ClockProvider;
++  CONST CHAR8 *Clocks[3]; /* master AHB, slave AHB, serial clock */
++} CR_TARGET_QUP_FIFO_I2C;
++
+ typedef struct {
+   CONST CR_TARGET_QUP_WRAPPER *Qup;
+   UINT8                       QupCount;
+   CONST CR_TARGET_GPI_CONTROLLER *Gpi;
+   UINT8                       GpiCount;
++  CONST CR_TARGET_QUP_FIFO_I2C *FifoI2c;
+ } CR_TARGET_QUP_CONTEXT;
+ 
+ CR_TARGET_QUP_CONTEXT *
+diff --git a/Include/Library/cr_android.h b/Include/Library/cr_android.h
+new file mode 100644
+index 0000000..2a78c49
+--- /dev/null
++++ b/Include/Library/cr_android.h
+@@ -0,0 +1,7 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++#include <oskal/cr_stdint.h>
++struct CrAndroidPin { uint32_t offset; const char *functions[10]; };
++struct CrAndroidClock { uint32_t id, vote, mask, halt, rcg; };
++const struct CrAndroidPin *CrAndroidPin(unsigned soc, unsigned pin);
++const struct CrAndroidClock *CrAndroidClock(unsigned soc, unsigned id);
+diff --git a/Include/Library/cr_debug_uart_poll.h b/Include/Library/cr_debug_uart_poll.h
+new file mode 100644
+index 0000000..2ebacfe
+--- /dev/null
++++ b/Include/Library/cr_debug_uart_poll.h
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++#include <Library/cr_geni.h>
++/* Explicit FIFO polling mode. Clock and pin ownership belongs to the caller. */
++struct CrDebugUartPoll {
++    struct CrIo io;
++    uintptr_t base;
++    size_t size;
++    uint32_t timeout_us, rx_word;
++    uint32_t saved[21], saved_rx_command;
++    uint8_t tx_depth, rx_depth, rx_bytes;
++    bool initialized, poisoned, claimed, inherited_rx;
++};
++int CrDebugUartPollInit(struct CrDebugUartPoll *uart);
++int CrDebugUartPollWrite(struct CrDebugUartPoll *uart, const void *data, size_t length);
++int CrDebugUartPollRead(struct CrDebugUartPoll *uart, uint8_t *byte);
++/* Restore inherited configuration only after both sequencers are idle.
++ * A timeout retains ownership; this call can retry after late completion. */
++int CrDebugUartPollQuiesce(struct CrDebugUartPoll *uart);
+diff --git a/Include/Library/cr_geni.h b/Include/Library/cr_geni.h
+new file mode 100644
+index 0000000..e6a7c69
+--- /dev/null
++++ b/Include/Library/cr_geni.h
+@@ -0,0 +1,84 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++
++#include <oskal/cr_stdint.h>
++
++/* All APIs run on the boot CPU. They do not configure GIC, DMA, or firmware. */
++enum CrIoResult {
++    CR_BUS_OK = 0,
++    CR_BUS_IO = -5,
++    CR_BUS_AGAIN = -11,
++    CR_BUS_BUSY = -16,
++    CR_BUS_INVALID = -22,
++    CR_BUS_UNSUPPORTED = -95,
++    CR_BUS_TIMEOUT = -110,
++    CR_BUS_NACK = -121
++};
++
++struct CrIo {
++    void *context;
++    uint32_t (*read32)(void *context, uintptr_t address);
++    void (*write32)(void *context, uintptr_t address, uint32_t value);
++    uint64_t (*now_us)(void *context);
++    void (*delay_us)(void *context, uint32_t us);
++};
++
++enum CrGeniProtocol { CR_GENI_SPI = 1, CR_GENI_I2C = 3 };
++
++struct CrGeniConfig {
++    uintptr_t base;
++    size_t size; /* Complete mapped SE resource; at least 0xe34 bytes. */
++    enum CrGeniProtocol protocol;
++    uint32_t source_hz;
++    uint32_t speed_hz;
++    uint8_t clock_index; /* Verified GCC DFS index; zero for a normal RCG. */
++    uint8_t spi_mode;    /* CPHA bit 0, CPOL bit 1; 8-bit MSB-first transfers. */
++    uint8_t chip_select;
++};
++
++#define CR_GENI_SAVED_REGS 26
++/* Zero-initialize before first init; config is for QUPv3, SPI oversampling 1. */
++struct CrGeni {
++    struct CrIo io;
++    struct CrGeniConfig config;
++    uint32_t saved[CR_GENI_SAVED_REGS];
++    uint8_t tx_depth, rx_depth;
++    bool initialized, busy, poisoned, i2c_held, cs_asserted;
++};
++
++struct CrI2cMessage {
++    uint16_t address;
++    bool read;
++    uint8_t *data;
++    size_t length;
++};
++
++struct CrSpiSegment {
++    const uint8_t *tx;
++    uint8_t *rx;
++    size_t length;
++    uint16_t delay_us; /* Hold CS after this segment, including the final one; <= 1000. */
++};
++
++/* NULL on non-AArch64 hosts. Native MMIO never probes arbitrary addresses. */
++const struct CrIo *CrIoDefault(void);
++bool CrIoValid(const struct CrIo *io);
++int CrGeniInit(struct CrGeni *bus,
++                       const struct CrGeniConfig *config,
++                       const struct CrIo *io);
++/* Adapter API for descriptor lists with explicit STOP boundaries. The caller
++ * owns the controller lease across all steps, and must quiesce on exit. */
++int CrGeniI2cStep(struct CrGeni *bus, const struct CrI2cMessage *message,
++                  bool stop, uint32_t timeout_us);
++/* timeout_us applies to the complete message; zero selects 20 ms.
++ * Recovery uses bounded 1 ms cancel/abort/release phases. Failed transfers may
++ * modify rx buffers.
++ * I2C emits STOP only after the final message. SPI holds CS across segments. */
++int CrGeniI2cTransfer(struct CrGeni *bus,
++                      const struct CrI2cMessage *messages, size_t count,
++                      uint32_t timeout_us);
++int CrGeniSpiTransfer(struct CrGeni *bus,
++                      const struct CrSpiSegment *segments, size_t count,
++                      uint32_t timeout_us);
++/* Must succeed before handing the SE to UEFI; restores saved SE configuration. */
++int CrGeniQuiesce(struct CrGeni *bus);
+diff --git a/Include/Library/cr_geni_regs.h b/Include/Library/cr_geni_regs.h
+new file mode 100644
+index 0000000..ffb841c
+--- /dev/null
++++ b/Include/Library/cr_geni_regs.h
+@@ -0,0 +1,252 @@
++/* Copyright (c) 2025-2026 Project Aloha Authors and Kancy Joe.
++ * SPDX-License-Identifier: MIT
++ * Register-only adaptation of the originals in reference/. See UPSTREAM.json.
++ */
++#pragma once
++#include <oskal/cr_stdint.h>
++#define KGENI_BIT(n) (UINT32_C(1) << (n))
++#define KGENI_MASK(hi, lo) ((UINT32_MAX >> (31U - (hi))) & (UINT32_MAX << (lo)))
++
++/* GENI SE protocol types (GENI_FW_REVISION_RO[15:8]) */
++typedef enum {
++  GENI_SE_PROTO_NONE = 0,
++  GENI_SE_PROTO_SPI  = 1,
++  GENI_SE_PROTO_UART = 2,
++  GENI_SE_PROTO_I2C  = 3,
++  GENI_SE_PROTO_I3C  = 4,
++} GENI_SE_PROTO_TYPE;
++
++/* Common SE registers (offset from SE base) */
++#define GENI_SE_FORCE_DEFAULT_REG 0x20
++#define GENI_SE_OUTPUT_CTRL 0x24
++#define GENI_SE_CGC_CTRL 0x28
++#define GENI_SE_STATUS 0x40
++#define GENI_SE_SER_M_CLK_CFG 0x48
++#define GENI_SE_SER_S_CLK_CFG 0x4c
++#define GENI_SE_IF_DISABLE_RO 0x64
++#define GENI_SE_FW_REVISION_RO 0x68
++#define GENI_SE_CLK_SEL 0x7c
++#define GENI_SE_BYTE_GRAN 0x254
++#define GENI_SE_DMA_MODE_EN 0x258
++#define GENI_SE_TX_PACKING_CFG0 0x260
++#define GENI_SE_TX_PACKING_CFG1 0x264
++#define GENI_SE_RX_PACKING_CFG0 0x284
++#define GENI_SE_RX_PACKING_CFG1 0x288
++#define GENI_SE_M_CMD0 0x600
++#define GENI_SE_M_CMD_CTRL_REG 0x604
++#define GENI_SE_M_IRQ_STATUS 0x610
++#define GENI_SE_M_IRQ_EN 0x614
++#define GENI_SE_M_IRQ_CLEAR 0x618
++#define GENI_SE_S_CMD0 0x630
++#define GENI_SE_S_CMD_CTRL_REG 0x634
++#define GENI_SE_S_IRQ_STATUS 0x640
++#define GENI_SE_S_IRQ_EN 0x644
++#define GENI_SE_S_IRQ_CLEAR 0x648
++#define GENI_SE_TX_FIFOn 0x700
++#define GENI_SE_RX_FIFOn 0x780
++#define GENI_SE_TX_FIFO_STATUS 0x800
++#define GENI_SE_RX_FIFO_STATUS 0x804
++#define GENI_SE_TX_WATERMARK_REG 0x80c
++#define GENI_SE_RX_WATERMARK_REG 0x810
++#define GENI_SE_RX_RFR_WATERMARK_REG 0x814
++#define GENI_SE_IOS 0x908
++#define GENI_SE_DMA_TX_IRQ_STAT 0xc40
++#define GENI_SE_DMA_TX_IRQ_CLR 0xc44
++#define GENI_SE_DMA_TX_FSM_RST 0xc58
++#define GENI_SE_DMA_RX_IRQ_STAT 0xd40
++#define GENI_SE_DMA_RX_IRQ_CLR 0xd44
++#define GENI_SE_DMA_RX_FSM_RST 0xd58
++#define GENI_SE_GSI_EVENT_EN 0xe18
++#define GENI_SE_IRQ_EN 0xe1c
++#define GENI_SE_HW_PARAM_0 0xe24
++#define GENI_SE_HW_PARAM_1 0xe28
++#define GENI_SE_DMA_GENERAL_CFG 0xe30
++
++/* GENI_SE_FORCE_DEFAULT_REG fields */
++#define GENI_SE_FORCE_DEFAULT KGENI_BIT(0)
++
++/* GENI_SE_OUTPUT_CTRL fields */
++#define GENI_SE_DEFAULT_IO_OUTPUT_CTRL_MSK KGENI_MASK(6, 0)
++
++/* GENI_SE_CGC_CTRL fields */
++#define GENI_SE_DEFAULT_CGC_EN KGENI_MASK(6, 0)
++
++/* GENI_SE_STATUS fields */
++#define GENI_SE_STATUS_M_GENI_CMD_ACTIVE KGENI_BIT(0)
++#define GENI_SE_STATUS_S_GENI_CMD_ACTIVE KGENI_BIT(12)
++
++/* GENI_SE_SER_M/S_CLK_CFG fields */
++#define GENI_SE_SER_CLK_EN KGENI_BIT(0)
++#define GENI_SE_CLK_DIV_MSK KGENI_MASK(15, 4)
++
++/* GENI_SE_IF_DISABLE_RO fields */
++#define GENI_SE_FIFO_IF_DISABLE KGENI_BIT(0)
++
++/* GENI_SE_FW_REVISION_RO fields */
++#define GENI_SE_FW_REV_PROTOCOL_MSK KGENI_MASK(15, 8)
++
++/* GENI_SE_CLK_SEL fields */
++#define GENI_SE_CLK_SEL_MSK KGENI_MASK(2, 0)
++
++/* GENI_SE_DMA_MODE_EN fields */
++#define GENI_SE_DMA_MODE_EN_BIT KGENI_BIT(0)
++
++/* GENI_SE_M_CMD0 / S_CMD0 fields */
++#define GENI_SE_CMD_OPCODE_MSK KGENI_MASK(31, 27)
++#define GENI_SE_CMD_PARAMS_MSK KGENI_MASK(26, 0)
++
++/* GENI_SE_M/S_CMD_CTRL_REG fields */
++#define GENI_SE_CMD_CTRL_GENI_CMD_CANCEL KGENI_BIT(2)
++#define GENI_SE_CMD_CTRL_GENI_CMD_ABORT KGENI_BIT(1)
++#define GENI_SE_CMD_CTRL_GENI_DISABLE KGENI_BIT(0)
++
++/* GENI_SE_M_IRQ_STATUS/EN/CLEAR fields */
++#define GENI_SE_M_IRQ_CMD_DONE KGENI_BIT(0)
++#define GENI_SE_M_IRQ_CMD_OVERRUN KGENI_BIT(1)
++#define GENI_SE_M_IRQ_ILLEGAL_CMD KGENI_BIT(2)
++#define GENI_SE_M_IRQ_CMD_FAILURE KGENI_BIT(3)
++#define GENI_SE_M_IRQ_CMD_CANCEL KGENI_BIT(4)
++#define GENI_SE_M_IRQ_CMD_ABORT KGENI_BIT(5)
++#define GENI_SE_M_IRQ_TIMESTAMP KGENI_BIT(6)
++#define GENI_SE_M_IRQ_RX_IRQ KGENI_BIT(7)
++#define GENI_SE_M_IRQ_GP_SYNC_IRQ_0 KGENI_BIT(8)
++#define GENI_SE_M_IRQ_GP_IRQ_0 KGENI_BIT(9)
++#define GENI_SE_M_IRQ_GP_IRQ_1 KGENI_BIT(10)
++#define GENI_SE_M_IRQ_GP_IRQ_2 KGENI_BIT(11)
++#define GENI_SE_M_IRQ_GP_IRQ_3 KGENI_BIT(12)
++#define GENI_SE_M_IRQ_GP_IRQ_4 KGENI_BIT(13)
++#define GENI_SE_M_IRQ_GP_IRQ_5 KGENI_BIT(14)
++#define GENI_SE_M_IRQ_IO_DATA_DEASSERT KGENI_BIT(22)
++#define GENI_SE_M_IRQ_IO_DATA_ASSERT KGENI_BIT(23)
++#define GENI_SE_M_IRQ_RX_FIFO_RD_ERR KGENI_BIT(24)
++#define GENI_SE_M_IRQ_RX_FIFO_WR_ERR KGENI_BIT(25)
++#define GENI_SE_M_IRQ_RX_FIFO_WATERMARK KGENI_BIT(26)
++#define GENI_SE_M_IRQ_RX_FIFO_LAST KGENI_BIT(27)
++#define GENI_SE_M_IRQ_TX_FIFO_RD_ERR KGENI_BIT(28)
++#define GENI_SE_M_IRQ_TX_FIFO_WR_ERR KGENI_BIT(29)
++#define GENI_SE_M_IRQ_TX_FIFO_WATERMARK KGENI_BIT(30)
++#define GENI_SE_M_IRQ_SEC_IRQ KGENI_BIT(31)
++#define GENI_SE_M_COMMON_IRQ_EN                                                \
++  (KGENI_MASK(6, 1) | GENI_SE_M_IRQ_IO_DATA_DEASSERT |                            \
++   GENI_SE_M_IRQ_IO_DATA_ASSERT | GENI_SE_M_IRQ_RX_FIFO_RD_ERR |               \
++   GENI_SE_M_IRQ_RX_FIFO_WR_ERR | GENI_SE_M_IRQ_TX_FIFO_RD_ERR |               \
++   GENI_SE_M_IRQ_TX_FIFO_WR_ERR)
++
++/* GENI_SE_S_IRQ_STATUS/EN/CLEAR fields */
++#define GENI_SE_S_IRQ_CMD_DONE KGENI_BIT(0)
++#define GENI_SE_S_IRQ_CMD_OVERRUN KGENI_BIT(1)
++#define GENI_SE_S_IRQ_ILLEGAL_CMD KGENI_BIT(2)
++#define GENI_SE_S_IRQ_CMD_FAILURE KGENI_BIT(3)
++#define GENI_SE_S_IRQ_CMD_CANCEL KGENI_BIT(4)
++#define GENI_SE_S_IRQ_CMD_ABORT KGENI_BIT(5)
++#define GENI_SE_S_IRQ_GP_IRQ_0 KGENI_BIT(9)
++#define GENI_SE_S_IRQ_RX_FIFO_RD_ERR KGENI_BIT(24)
++#define GENI_SE_S_IRQ_RX_FIFO_WR_ERR KGENI_BIT(25)
++#define GENI_SE_S_IRQ_RX_FIFO_WATERMARK KGENI_BIT(26)
++#define GENI_SE_S_IRQ_RX_FIFO_LAST KGENI_BIT(27)
++#define GENI_SE_S_COMMON_IRQ_EN                                                \
++  (KGENI_MASK(5, 1) | KGENI_MASK(13, 9) | GENI_SE_S_IRQ_RX_FIFO_RD_ERR |             \
++   GENI_SE_S_IRQ_RX_FIFO_WR_ERR)
++
++/* GENI_SE_TX_FIFO_STATUS fields */
++#define GENI_SE_TX_FIFO_WC_MSK KGENI_MASK(27, 0)
++
++/* GENI_SE_RX_FIFO_STATUS fields */
++#define GENI_SE_RX_FIFO_LAST_MSK KGENI_BIT(31)
++#define GENI_SE_RX_FIFO_LAST_BYTE_VALID_MSK KGENI_MASK(30, 28)
++#define GENI_SE_RX_FIFO_WC_MSK KGENI_MASK(24, 0)
++
++/* Watermark registers */
++#define GENI_SE_WATERMARK_MSK KGENI_MASK(5, 0)
++
++/* GENI_SE_HW_PARAM_0/1 fields */
++#define GENI_SE_HW_PARAM_TX_FIFO_WIDTH_MSK KGENI_MASK(29, 24)
++#define GENI_SE_HW_PARAM_TX_FIFO_DEPTH_MSK KGENI_MASK(21, 16)
++#define GENI_SE_HW_PARAM_RX_FIFO_WIDTH_MSK KGENI_MASK(29, 24)
++#define GENI_SE_HW_PARAM_RX_FIFO_DEPTH_MSK KGENI_MASK(21, 16)
++
++/* GENI_SE_IRQ_EN fields */
++#define GENI_SE_IRQ_DMA_RX_EN KGENI_BIT(0)
++#define GENI_SE_IRQ_DMA_TX_EN KGENI_BIT(1)
++#define GENI_SE_IRQ_GENI_M_EN KGENI_BIT(2)
++#define GENI_SE_IRQ_GENI_S_EN KGENI_BIT(3)
++
++/* GENI_SE_DMA_GENERAL_CFG fields */
++#define GENI_SE_DMA_RX_CLK_CGC_ON KGENI_BIT(0)
++#define GENI_SE_DMA_TX_CLK_CGC_ON KGENI_BIT(1)
++#define GENI_SE_DMA_AHB_SLV_CFG_ON KGENI_BIT(2)
++#define GENI_SE_AHB_SEC_SLV_CLK_CGC_ON KGENI_BIT(3)
++
++
++/* I2C specific SE registers */
++#define I2C_GENI_SE_TX_TRANS_LEN 0x26c
++#define I2C_GENI_SE_RX_TRANS_LEN 0x270
++#define I2C_GENI_SE_SCL_COUNTERS 0x278
++
++/* SCL counter fields */
++#define I2C_GENI_SCL_HIGH_COUNTER_MSK KGENI_MASK(29, 20)
++#define I2C_GENI_SCL_LOW_COUNTER_MSK KGENI_MASK(19, 10)
++#define I2C_GENI_SCL_CYCLE_COUNTER_MSK KGENI_MASK(9, 0)
++
++/* M_CMD opcodes for I2C */
++#define I2C_GENI_M_CMD_OPCODE_WRITE 0x1
++#define I2C_GENI_M_CMD_OPCODE_READ 0x2
++#define I2C_GENI_M_CMD_OPCODE_WRITE_READ 0x3
++#define I2C_GENI_M_CMD_OPCODE_ADDR_ONLY 0x4
++#define I2C_GENI_M_CMD_OPCODE_BUS_CLEAR 0x6
++#define I2C_GENI_M_CMD_OPCODE_STOP_ON_BUS 0x7
++
++/* M_CMD params for I2C */
++#define I2C_GENI_M_CMD_PARAM_PRE_CMD_DELAY KGENI_BIT(0)
++#define I2C_GENI_M_CMD_PARAM_TIMESTAMP_BEFORE KGENI_BIT(1)
++#define I2C_GENI_M_CMD_PARAM_STOP_STRETCH KGENI_BIT(2)
++#define I2C_GENI_M_CMD_PARAM_TIMESTAMP_AFTER KGENI_BIT(3)
++#define I2C_GENI_M_CMD_PARAM_POST_COMMAND_DELAY KGENI_BIT(4)
++#define I2C_GENI_M_CMD_PARAM_IGNORE_ADD_NACK KGENI_BIT(6)
++#define I2C_GENI_M_CMD_PARAM_READ_FINISHED_WITH_ACK KGENI_BIT(7)
++#define I2C_GENI_M_CMD_PARAM_BYPASS_ADDR_PHASE KGENI_BIT(8)
++#define I2C_GENI_M_CMD_PARAM_SLV_ADDR_MSK KGENI_MASK(15, 9)
++
++/* Error irq bits (GP_IRQ mapping) */
++#define I2C_GENI_M_IRQ_NACK GENI_SE_M_IRQ_GP_IRQ_1
++#define I2C_GENI_M_IRQ_BUS_PROTO GENI_SE_M_IRQ_GP_IRQ_3
++#define I2C_GENI_M_IRQ_ARB_LOST GENI_SE_M_IRQ_GP_IRQ_4
++#define I2C_GENI_M_IRQ_ERROR_MSK                                               \
++  (GENI_SE_M_IRQ_CMD_OVERRUN | GENI_SE_M_IRQ_ILLEGAL_CMD |                     \
++   GENI_SE_M_IRQ_CMD_FAILURE | I2C_GENI_M_IRQ_NACK |                           \
++   I2C_GENI_M_IRQ_BUS_PROTO | I2C_GENI_M_IRQ_ARB_LOST)
++
++
++/* SPI specific SE registers */
++#define SPI_GENI_SE_CPHA 0x224
++#define SPI_GENI_SE_LOOPBACK 0x22c
++#define SPI_GENI_SE_CPOL 0x230
++#define SPI_GENI_SE_DEMUX_OUTPUT_INV 0x24c
++#define SPI_GENI_SE_DEMUX_SEL 0x250
++#define SPI_GENI_SE_TRANS_CFG 0x25c
++#define SPI_GENI_SE_WORD_LEN 0x268
++#define SPI_GENI_SE_TX_TRANS_LEN 0x26c
++#define SPI_GENI_SE_RX_TRANS_LEN 0x270
++#define SPI_GENI_SE_PRE_POST_CMD_DLY 0x274
++#define SPI_GENI_SE_DELAY_COUNTERS 0x278
++
++/* Register fields */
++#define SPI_GENI_CPHA_BIT KGENI_BIT(0)
++#define SPI_GENI_CPOL_BIT KGENI_BIT(2)
++#define SPI_GENI_LOOPBACK_ENABLE 0x1
++#define SPI_GENI_LOOPBACK_MSK KGENI_MASK(1, 0)
++#define SPI_GENI_CS_DEMUX_OUTPUT_INV_MSK KGENI_MASK(3, 0)
++#define SPI_GENI_CS_DEMUX_OUTPUT_SEL_MSK KGENI_MASK(3, 0)
++#define SPI_GENI_TRANS_CFG_CS_TOGGLE KGENI_BIT(1)
++#define SPI_GENI_WORD_LEN_MSK KGENI_MASK(9, 0)
++#define SPI_GENI_MIN_WORD_LEN 4
++#define SPI_GENI_TRANS_LEN_MSK KGENI_MASK(23, 0)
++
++/* M_CMD opcodes for SPI */
++#define SPI_GENI_M_CMD_OPCODE_TX_ONLY 0x1
++#define SPI_GENI_M_CMD_OPCODE_RX_ONLY 0x2
++#define SPI_GENI_M_CMD_OPCODE_CS_ASSERT 0x8
++#define SPI_GENI_M_CMD_OPCODE_CS_DEASSERT 0x9
++
++/* M_CMD params for SPI */
++#define SPI_GENI_M_CMD_PARAM_FRAGMENTATION KGENI_BIT(2)
+diff --git a/Include/Library/cr_resources.h b/Include/Library/cr_resources.h
+new file mode 100644
+index 0000000..a93bc74
+--- /dev/null
++++ b/Include/Library/cr_resources.h
+@@ -0,0 +1,72 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++#include <Library/cr_geni.h>
++#include <Library/gpio.h>
++
++enum CrQupStage {
++    CR_QUP_STAGE_NONE,
++    CR_QUP_STAGE_CMD_DB,
++    CR_QUP_STAGE_CLOCK,
++    CR_QUP_STAGE_GENI,
++    CR_QUP_STAGE_POWER,
++    CR_QUP_STAGE_RESET,
++    CR_QUP_STAGE_READY
++};
++
++/* Zero-initialize before first use. Private resource snapshots are stored here
++ * so failure cleanup never depends on allocation or on UEFI services. */
++struct CrQupResources;
++struct CrQupContext {
++    struct CrGeni i2c;
++    GpioDeviceContext gpio;
++    struct CrIo io;
++    enum CrQupStage stage;
++    const struct CrQupResources *board;
++    uint32_t rail_addresses[2];
++    uint32_t added_clock_votes, saved_rcg_config;
++    uint32_t saved_pins[3];
++    uint32_t saved_tcs[7];
++    uint8_t tcs_slot, rsc_major;
++    bool clocks_claimed, rcg_changed, pins_claimed;
++    bool tcs_claimed, tcs_pending, initialized;
++};
++
++
++struct CrRail {
++    const char *name;
++    uint16_t millivolts; /* Zero for an enable-only fixed XOB rail. */
++    uint8_t mode; /* Zero means preserve the inherited mode vote. */
++};
++struct CrQupResources {
++    uintptr_t geni, vote, rcg, ahb_halt[2], serial_halt;
++    size_t geni_size;
++    uint32_t ahb_votes, serial_vote;
++    uintptr_t bus_pins[2], irq_pin, reset_pin, gate_pin;
++    uint32_t irq_config, reset_config, gate_delay_us, reset_low_us;
++    uintptr_t cmd_db_base, cmd_db_dictionary;
++    size_t cmd_db_size;
++    uintptr_t rsc_base;
++    size_t rsc_size;
++    uint32_t tcs_offset, drv_id, active_offset, active_count;
++    uint32_t source_hz, speed_hz;
++    uint32_t bus_config[2];
++    bool irq_active_low;
++    struct CrRail rails[2];
++    unsigned rail_count;
++};
++
++int CrCmdDbLookup(const struct CrIo *io, uintptr_t base, size_t size,
++                  const char *name, uint32_t *address);
++int CrCmdDbLookupDictionary(const struct CrIo *io, uintptr_t dictionary,
++                            const char *name, uint32_t *address);
++int CrRpmhPollClaim(struct CrQupContext *p);
++int CrRpmhPollRestore(struct CrQupContext *p);
++int CrRpmhPollComplete(struct CrQupContext *p);
++int CrRpmhPollWrite(struct CrQupContext *p, uint32_t address, uint32_t value);
++int CrClockPollPrepare(struct CrQupContext *p, uint8_t *index);
++int CrClockPollRestore(struct CrQupContext *p);
++int CrQupInit(struct CrQupContext *p, const struct CrIo *io,
++              const struct CrQupResources *resources);
++int CrQupReset(struct CrQupContext *p);
++int CrQupIrq(struct CrQupContext *p);
++int CrQupQuiesce(struct CrQupContext *p);
+diff --git a/Include/Library/cr_splash.h b/Include/Library/cr_splash.h
+new file mode 100644
+index 0000000..be517cb
+--- /dev/null
++++ b/Include/Library/cr_splash.h
+@@ -0,0 +1,26 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++#include <Library/cr_geni.h>
++enum CrSplashFormat { CR_SPLASH_RGB565, CR_SPLASH_XRGB8888, CR_SPLASH_ARGB8888,
++                      CR_SPLASH_XBGR8888, CR_SPLASH_ABGR8888 };
++struct CrSplashResources {
++    uintptr_t base;
++    size_t size;
++    uint64_t reserved_base, reserved_size;
++    uint32_t pipe[10], ctl[8], mixer[8];
++    uint8_t pipe_id[10]; /* VIG0..3=0..3, DMA0..5=4..9 */
++    unsigned pipe_count, ctl_count, mixer_count;
++    bool lm_source_select;
++    bool sspp_rec_separated;
++    uint8_t mixer_id[8];
++    uint32_t stage[11];
++    unsigned stage_count;
++};
++struct CrSplash {
++    uintptr_t address;
++    size_t size;
++    uint32_t width, height, stride;
++    enum CrSplashFormat format;
++};
++int CrSplashRead(const struct CrSplashResources *resources, const struct CrIo *io,
++                  struct CrSplash *splash);
+diff --git a/Include/Library/gpio.h b/Include/Library/gpio.h
+index 6f66fdf..49e7212 100644
+--- a/Include/Library/gpio.h
++++ b/Include/Library/gpio.h
+@@ -4,6 +4,7 @@
+  *   SPDX-License-Identifier: MIT
+  */
+ #pragma once
++#include <Library/cr_geni.h>
+ 
+ #include "pdc.h"
+ #include <oskal/common.h>
+@@ -180,6 +181,7 @@ typedef struct {
+ // Context
+ #define GPIO_MAX_REG_CFG 16
+ typedef struct {
++  struct CrIo Io;
+   UINT64              TlmmBaseAddress;
+   UINT16              PinCount;
+   BOOLEAN             PullUpNoKeeper; // not used in kmd
+diff --git a/Include/Library/pmic_gpio.h b/Include/Library/pmic_gpio.h
+index 8176a03..1e810c2 100644
+--- a/Include/Library/pmic_gpio.h
++++ b/Include/Library/pmic_gpio.h
+@@ -190,3 +190,8 @@ CR_STATUS
+ PmicGpioEnableInterrupt(
+     IN OUT PmicGpioDeviceContext *Context, IN UINT16 Controller, IN UINT16 Pin,
+     IN BOOLEAN Enable);
++
++/* Read an inherited input without probing/configuring other pins or IRQs.
++ * PeripheralAddress is the DT-resolved 0x100-aligned pin peripheral. */
++CR_STATUS PmicGpioReadStatus(IN CONST PmicGpioBusOps *Bus, IN UINT8 Sid,
++                            IN UINT16 PeripheralAddress, OUT UINT8 *Status);
+diff --git a/Include/oskal/cr_assert.h b/Include/oskal/cr_assert.h
+index 788b8aa..d214b3d 100644
+--- a/Include/oskal/cr_assert.h
++++ b/Include/oskal/cr_assert.h
+@@ -5,6 +5,10 @@
+  */
+ 
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ 
+ #include <oskal/cr_debug.h>
+ 
+@@ -44,3 +48,5 @@
+ // Static assert
+ #define CR_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+ #endif // _KERNEL_MODE
++
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_atomic.h b/Include/oskal/cr_atomic.h
+index a2f9443..6f41bb0 100644
+--- a/Include/oskal/cr_atomic.h
++++ b/Include/oskal/cr_atomic.h
+@@ -4,6 +4,10 @@
+  *  SPDX-License-Identifier: MIT
+  */
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ 
+ #include <oskal/cr_types.h>
+ 
+@@ -73,3 +77,5 @@ CrAtomicAnd32(IN OUT volatile UINT32 *Value, IN UINT32 Mask)
+ }
+ 
+ #endif
++
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_debug.h b/Include/oskal/cr_debug.h
+index ececcb3..0627010 100644
+--- a/Include/oskal/cr_debug.h
++++ b/Include/oskal/cr_debug.h
+@@ -5,6 +5,10 @@
+  */
+ 
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ // OS Independent debug print lib
+ #ifdef _KERNEL_MODE
+ #include <ntddk.h>
+@@ -78,3 +82,5 @@
+       ##__VA_ARGS__, __FILE__, __LINE__)
+ 
+ #endif // _KERNEL_MODE
++
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_freestanding.h b/Include/oskal/cr_freestanding.h
+new file mode 100644
+index 0000000..5aa088c
+--- /dev/null
++++ b/Include/oskal/cr_freestanding.h
+@@ -0,0 +1,6 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++/* The selected freestanding port supplies fixed-width types, CR_STATUS,
++ * allocation/string functions, ordered MMIO, monotonic microseconds, locks,
++ * atomic operations and logging. It must not depend on UEFI or Windows. */
++#include <crdk_os.h>
+diff --git a/Include/oskal/cr_lock.h b/Include/oskal/cr_lock.h
+index 43af47d..e0a91e3 100644
+--- a/Include/oskal/cr_lock.h
++++ b/Include/oskal/cr_lock.h
+@@ -4,6 +4,10 @@
+  *  SPDX-License-Identifier: MIT
+  */
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ 
+ #include <oskal/cr_types.h>
+ 
+@@ -47,3 +51,5 @@ STATIC inline VOID CrLockRelease(IN OUT CR_LOCK *Lock) {
+ }
+ 
+ #endif
++
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_memory.h b/Include/oskal/cr_memory.h
+index 92f5a33..b7b3feb 100644
+--- a/Include/oskal/cr_memory.h
++++ b/Include/oskal/cr_memory.h
+@@ -5,6 +5,10 @@
+  */
+ 
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ 
+ //#define CR_OSKAL_TRACE_MMIO 1
+ 
+@@ -26,10 +30,8 @@ UINT32 CrMmioAnd32(UINTN Address, UINT32 DataToAnd);
+ #else
+ #include <Library/IoLib.h>
+ 
+-#define CR_MEM_BARRIER_DATA_SYN_BARRIAR()                                        \
+-  do {                                                                         \
+-    asm volatile("dsb sy" ::: "memory");                                       \
+-  } while (0)
++#include <Library/BaseLib.h>
++#define CR_MEM_BARRIER_DATA_SYN_BARRIAR() MemoryFence()
+ 
+ /**
+  * CrMmioRead32 - Read a 32-bit value from a MMIO address
+@@ -109,4 +111,5 @@ STATIC inline UINT32 CrMmioAnd32(UINTN Address, UINT32 DataToAnd) {
+   return MmioAnd32(Address, DataToAnd);
+ }
+ 
+-#endif // _KERNEL_MODE
+\ No newline at end of file
++#endif // _KERNEL_MODE
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_status.h b/Include/oskal/cr_status.h
+index 51aeb55..4143205 100644
+--- a/Include/oskal/cr_status.h
++++ b/Include/oskal/cr_status.h
+@@ -5,6 +5,10 @@
+  */
+ 
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ // OS Independent status code definitions
+ #ifdef _KERNEL_MODE
+ #include <ntddk.h>
+@@ -43,3 +47,5 @@ typedef EFI_STATUS CR_STATUS;
+ #define CR_BUFFER_TOO_SMALL EFI_BUFFER_TOO_SMALL
+ #define CR_ERROR(x) EFI_ERROR(x)
+ #endif // _KERNEL_MODE
++
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_stdint.h b/Include/oskal/cr_stdint.h
+new file mode 100644
+index 0000000..2aa9b7f
+--- /dev/null
++++ b/Include/oskal/cr_stdint.h
+@@ -0,0 +1,24 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++#if defined(CR_FREESTANDING) || defined(CRANE_HOST_TEST) || defined(CR_HOST_TEST)
++#include <stdint.h>
++#include <stddef.h>
++#include <stdbool.h>
++#else
++#include <oskal/cr_types.h>
++typedef UINT8 uint8_t;
++typedef UINT16 uint16_t;
++typedef UINT32 uint32_t;
++typedef UINT64 uint64_t;
++typedef UINTN uintptr_t;
++typedef UINTN size_t;
++typedef BOOLEAN bool;
++#define true TRUE
++#define false FALSE
++#define UINT32_C(v) v##U
++#define UINT64_C(v) v##ULL
++#define UINT32_MAX MAX_UINT32
++#define UINT64_MAX MAX_UINT64
++#define UINTPTR_MAX MAX_UINTN
++#define SIZE_MAX MAX_UINTN
++#endif
+diff --git a/Include/oskal/cr_string.h b/Include/oskal/cr_string.h
+index cccac0d..a4f3a40 100644
+--- a/Include/oskal/cr_string.h
++++ b/Include/oskal/cr_string.h
+@@ -5,6 +5,10 @@
+  */
+ 
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ #include <oskal/cr_types.h>
+ 
+ #ifdef _KERNEL_MODE
+@@ -56,6 +60,7 @@ STATIC inline INTN cr_strcmp(const CHAR8 *str1, const CHAR8 *str2) {
+ 
+ #else
+ #include <Library/BaseMemoryLib.h>
++#include <Library/BaseLib.h>
+ // memcmp wrapper
+ STATIC inline INTN cr_memcmp(const VOID *dest, const VOID *src, UINTN len) {
+   return CompareMem(dest, src, len);
+@@ -80,3 +85,5 @@ STATIC inline INTN cr_strcmp(const CHAR8 *str1, const CHAR8 *str2) {
+   return AsciiStrCmp(str1, str2);
+ }
+ #endif
++
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_time.h b/Include/oskal/cr_time.h
+index bde8eea..1c61a85 100644
+--- a/Include/oskal/cr_time.h
++++ b/Include/oskal/cr_time.h
+@@ -5,6 +5,10 @@
+  */
+ 
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
++
+ #ifdef _KERNEL_MODE
+ #include <ntddk.h>
+ #include <wdm.h>
+@@ -60,4 +64,5 @@ cr_sleep(ULONGLONG us)
+   do {                                                                         \
+     MicroSecondDelay(us);                                                      \
+   } while (0)
+-#endif
+\ No newline at end of file
++#endif
++#endif /* CR_FREESTANDING */
+diff --git a/Include/oskal/cr_types.h b/Include/oskal/cr_types.h
+index 6f822a9..3cbd0ed 100644
+--- a/Include/oskal/cr_types.h
++++ b/Include/oskal/cr_types.h
+@@ -5,8 +5,10 @@
+  */
+ 
+ #pragma once
++#if defined(CR_FREESTANDING)
++#include <oskal/cr_freestanding.h>
++#else
+ 
+-#include "cr_assert.h"
+ 
+ #define TO_BOOL(x) ((x) ? TRUE : FALSE)
+ 
+@@ -20,6 +22,8 @@ typedef CHAR CHAR8;
+ #include <Uefi.h>
+ #endif
+ 
++#include "cr_assert.h"
++
+ CR_STATIC_ASSERT(sizeof(INTN) == sizeof(void *),
+                  "INTN must be same size as pointer");
+ CR_STATIC_ASSERT(sizeof(UINTN) == sizeof(void *),
+@@ -31,3 +35,5 @@ CR_STATIC_ASSERT(sizeof(INT32) == 4, "INT32 must be 4 bytes");
+ CR_STATIC_ASSERT(sizeof(UINT32) == 4, "UINT32 must be 4 bytes");
+ CR_STATIC_ASSERT(sizeof(INT64) == 8, "INT64 must be 8 bytes");
+ CR_STATIC_ASSERT(sizeof(UINT64) == 8, "UINT64 must be 8 bytes");
++
++#endif /* CR_FREESTANDING */
+diff --git a/Library/AndroidBindingsLib/android_bindings.c b/Library/AndroidBindingsLib/android_bindings.c
+new file mode 100644
+index 0000000..1d3c437
+--- /dev/null
++++ b/Library/AndroidBindingsLib/android_bindings.c
+@@ -0,0 +1,444 @@
++/* SPDX-License-Identifier: MIT
++ * Generated numeric hardware facts and mux names. Source commits and hashes
++ * are recorded in the integration SM8150-SOURCES.json / SM8250-SOURCES.json.
++ */
++#include <Library/cr_android.h>
++static const struct CrAndroidPin pins_8150[] = {
++    [0] = {0xd00000, {"gpio", "qup0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [1] = {0xd01000, {"gpio", "qup0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [2] = {0xd02000, {"gpio", "qup0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [3] = {0xd03000, {"gpio", "qup0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [4] = {0xd04000, {"gpio", "qup6", "rgmii_txd1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [5] = {0xd05000, {"gpio", "qup6", "rgmii_txd2", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [6] = {0xd06000, {"gpio", "qup6", "rgmii_txd3", "qup_l6", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [7] = {0xd07000, {"gpio", "qup6", "rgmii_mdc", "qup_l5", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [8] = {0x908000, {"gpio", "mdp_vsync", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [9] = {0x909000, {"gpio", "mdp_vsync", "edp_lcd", "qup10", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [10] = {0x90a000, {"gpio", "mdp_vsync", "m_voc", "edp_hot", "qup10", NULL, NULL, NULL, NULL, NULL}},
++    [11] = {0x90b000, {"gpio", "qup10", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [12] = {0x90c000, {"gpio", "qup10", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [13] = {0x90d000, {"gpio", "cam_mclk", "qdss_gpio0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [14] = {0x90e000, {"gpio", "cam_mclk", "qdss_gpio1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [15] = {0x90f000, {"gpio", "cam_mclk", "qdss_gpio2", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [16] = {0x910000, {"gpio", "cam_mclk", "qdss_gpio3", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [17] = {0x911000, {"gpio", "cci_i2c", "qdss_gpio4", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [18] = {0x912000, {"gpio", "cci_i2c", "phase_flag3", NULL, "qdss_gpio5", NULL, NULL, NULL, NULL, NULL}},
++    [19] = {0x913000, {"gpio", "cci_i2c", "phase_flag2", NULL, "qdss_gpio6", NULL, NULL, NULL, NULL, NULL}},
++    [20] = {0x914000, {"gpio", "cci_i2c", "phase_flag1", NULL, "qdss_gpio7", NULL, NULL, NULL, NULL, NULL}},
++    [21] = {0x515000, {"gpio", "cci_timer0", "gcc_gp2", "qdss_gpio8", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [22] = {0x516000, {"gpio", "cci_timer1", "gcc_gp3", "qdss_gpio", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [23] = {0x517000, {"gpio", "cci_timer2", "qup18", "qdss_gpio9", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [24] = {0x518000, {"gpio", "cci_timer3", "cci_async", "qup18", "qdss_gpio10", NULL, NULL, NULL, NULL, NULL}},
++    [25] = {0x519000, {"gpio", "cci_timer4", "cci_async", "qup18", "qdss_gpio11", NULL, NULL, NULL, NULL, NULL}},
++    [26] = {0x51a000, {"gpio", "cci_async", "qup18", "qdss_gpio12", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [27] = {0x51b000, {"gpio", "qup15", NULL, "qdss_gpio15", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [28] = {0x51c000, {"gpio", "qup15", "qdss_gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [29] = {0x51d000, {"gpio", "qup15", "qdss_gpio13", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [30] = {0x51e000, {"gpio", "qup15", "qdss_gpio14", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [31] = {0x91f000, {"gpio", "cci_i2c", "qdss_gpio13", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [32] = {0x920000, {"gpio", "cci_i2c", "qdss_gpio0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [33] = {0x921000, {"gpio", "cci_i2c", "qup_l5", "qdss_gpio1", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [34] = {0x922000, {"gpio", "cci_i2c", "qup_l6", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [35] = {0x923000, {"gpio", "pci_e0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [36] = {0x924000, {"gpio", "pci_e0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [37] = {0x925000, {"gpio", "qup_l4", "agera_pll", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [38] = {0xd26000, {"gpio", "usb_phy", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [39] = {0x927000, {"gpio", "qup9", "qdss_gpio6", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [40] = {0x928000, {"gpio", "qup9", "qdss_gpio7", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [41] = {0x929000, {"gpio", "qup9", "qdss_gpio14", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [42] = {0x92a000, {"gpio", "qup9", "qdss_gpio15", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [43] = {0x52b000, {"gpio", "qup13", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [44] = {0x52c000, {"gpio", "qup13", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [45] = {0x52d000, {"gpio", "qup13", "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [46] = {0x52e000, {"gpio", "qup13", "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [47] = {0x52f000, {"gpio", "qup14", "qdss_gpio12", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [48] = {0x530000, {"gpio", "qup14", "qdss_gpio10", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [49] = {0x531000, {"gpio", "qup14", NULL, "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [50] = {0x532000, {"gpio", "qup14", "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [51] = {0xd33000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [52] = {0xd34000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [53] = {0xd35000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [54] = {0xd36000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [55] = {0xd37000, {"gpio", "qup17", "qup19", "phase_flag5", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [56] = {0xd38000, {"gpio", "qup17", "qup19", "qdss_cti", "phase_flag0", NULL, NULL, NULL, NULL, NULL}},
++    [57] = {0xd39000, {"gpio", "qup17", "qup19", "qdss_cti", "phase_flag22", NULL, NULL, NULL, NULL, NULL}},
++    [58] = {0xd3a000, {"gpio", "qup17", "qup19", "qdss_cti", "qdss_cti", NULL, NULL, NULL, NULL, NULL}},
++    [59] = {0xd3b000, {"gpio", "rgmii_mdio", "qup_l4", "phase_flag10", NULL, "atest_char", NULL, NULL, NULL, NULL}},
++    [60] = {0xd3c000, {"gpio", NULL, "nav_pps", "nav_pps", "atest_usb2", NULL, NULL, NULL, NULL, NULL}},
++    [61] = {0xd3d000, {"gpio", "qlink_request", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [62] = {0xd3e000, {"gpio", "qlink_enable", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [63] = {0xd3f000, {"gpio", "wmss_reset", "atest_usb23", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [64] = {0xd40000, {"gpio", NULL, "phase_flag6", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [65] = {0xd41000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [66] = {0xd42000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [67] = {0xd43000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [68] = {0xd44000, {"gpio", NULL, "pa_indicator", "phase_flag23", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [69] = {0xd45000, {"gpio", "mss_lte", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [70] = {0xd46000, {"gpio", "mss_lte", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [71] = {0xd47000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [72] = {0xd48000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [73] = {0xd49000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [74] = {0xd4a000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [75] = {0xd4b000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [76] = {0xd4c000, {"gpio", NULL, NULL, NULL, "nav_pps", "nav_pps", "phase_flag24", NULL, NULL, NULL}},
++    [77] = {0xd4d000, {"gpio", NULL, NULL, NULL, "nav_pps", "nav_pps", NULL, NULL, NULL, NULL}},
++    [78] = {0xd4e000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [79] = {0xd4f000, {"gpio", NULL, NULL, "phase_flag8", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [80] = {0xd50000, {"gpio", NULL, NULL, "phase_flag7", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [81] = {0xd51000, {"gpio", NULL, NULL, NULL, "nav_pps", "nav_pps", "qup_l4", "mdp_vsync", "emac_pps", NULL}},
++    [82] = {0xd52000, {"gpio", NULL, NULL, NULL, "nav_pps", "nav_pps", "qup_l5", "mdp_vsync", NULL, NULL}},
++    [83] = {0x953000, {"gpio", "qup12", "qup16", NULL, "qdss_gpio2", NULL, NULL, NULL, NULL, NULL}},
++    [84] = {0x954000, {"gpio", "qup12", "qup16", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [85] = {0x955000, {"gpio", "qup12", "qup16", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [86] = {0x956000, {"gpio", "qup12", "qup16", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [87] = {0x557000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [88] = {0x958000, {"gpio", "tsif1_clk", "qup8", "qspi_cs", "tgu_ch3", NULL, NULL, NULL, NULL, NULL}},
++    [89] = {0x959000, {"gpio", "tsif1_en", "qup8", "qspi0", "mdp_vsync0", "mdp_vsync1", "mdp_vsync2", "mdp_vsync3", "tgu_ch0", NULL}},
++    [90] = {0x95a000, {"gpio", "tsif1_data", "qup8", "qspi1", "sdc4_cmd", "phase_flag31", "tgu_ch1", NULL, NULL, "wlan1_adc1"}},
++    [91] = {0x95b000, {"gpio", "tsif1_sync", "qup8", "qspi2", "sdc43", "vfr_1", "phase_flag30", "tgu_ch2", NULL, NULL}},
++    [92] = {0x95c000, {"gpio", "tsif2_clk", "qup11", "qspi_clk", "sdc4_clk", "phase_flag27", NULL, "wlan2_adc1", NULL, NULL}},
++    [93] = {0x95d000, {"gpio", "tsif2_en", "qup11", "qspi3", "sdc42", "phase_flag26", NULL, "wlan2_adc0", NULL, NULL}},
++    [94] = {0x95e000, {"gpio", "tsif2_data", "qup11", "qspi_cs", "sdc41", "phase_flag25", NULL, NULL, NULL, NULL}},
++    [95] = {0x95f000, {"gpio", "tsif2_sync", "qup11", "sdc40", "qup_l4", NULL, NULL, NULL, NULL, NULL}},
++    [96] = {0x960000, {"gpio", "tsif2_error", "qup_l5", "phase_flag11", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [97] = {0x961000, {"gpio", "sd_write", "tsif1_error", "qup_l6", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [98] = {0xd62000, {"gpio", "qup7", "ddr_bist", "ddr_pxi3", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [99] = {0xd63000, {"gpio", "qup7", "ddr_bist", "atest_usb13", "ddr_pxi1", NULL, NULL, NULL, NULL, NULL}},
++    [100] = {0xd64000, {"gpio", "qup7", "pll_bypassnl", "atest_usb12", "ddr_pxi1", NULL, NULL, NULL, NULL, NULL}},
++    [101] = {0xd65000, {"gpio", "qup7", "pll_reset", "ddr_pxi3", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [102] = {0x966000, {"gpio", "pci_e1", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [103] = {0x967000, {"gpio", "pci_e1", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [104] = {0x968000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [105] = {0x169000, {"gpio", "uim2_data", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [106] = {0x16a000, {"gpio", "uim2_clk", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [107] = {0x16b000, {"gpio", "uim2_reset", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [108] = {0x16c000, {"gpio", "uim2_present", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [109] = {0x16d000, {"gpio", "uim1_data", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [110] = {0x16e000, {"gpio", "uim1_clk", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [111] = {0x16f000, {"gpio", "uim1_reset", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [112] = {0x170000, {"gpio", "uim1_present", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [113] = {0x171000, {"gpio", "uim_batt", "usb2phy_ac", "aoss_cti", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [114] = {0xd72000, {"gpio", "qup1", "rgmii_txc", "phase_flag20", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [115] = {0xd73000, {"gpio", "qup1", "rgmii_rxc", "phase_flag19", "adsp_ext", NULL, NULL, NULL, NULL, NULL}},
++    [116] = {0xd74000, {"gpio", "qup1", "rgmii_rx", "phase_flag18", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [117] = {0xd75000, {"gpio", "qup1", "rgmii_rxd0", "phase_flag17", NULL, "qdss_gpio3", NULL, NULL, NULL, NULL}},
++    [118] = {0xd76000, {"gpio", "rgmii_rxd1", "phase_flag16", NULL, "qdss_gpio4", NULL, NULL, NULL, NULL, NULL}},
++    [119] = {0xd77000, {"gpio", "qup5", "rgmii_rxd2", "phase_flag15", NULL, "qdss_gpio5", NULL, NULL, NULL, NULL}},
++    [120] = {0xd78000, {"gpio", "qup5", "rgmii_rxd3", "phase_flag14", NULL, "qdss_gpio", NULL, NULL, NULL, NULL}},
++    [121] = {0xd79000, {"gpio", "qup5", "rgmii_tx", "phase_flag13", NULL, "qdss_gpio", NULL, NULL, NULL, NULL}},
++    [122] = {0xd7a000, {"gpio", "qup5", "rgmii_txd0", "phase_flag12", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [123] = {0xd7b000, {"gpio", "usb2phy_ac", "qup_l6", "atest_usb22", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [124] = {0xd7c000, {"gpio", "emac_phy", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [125] = {0x17d000, {"gpio", "hs3_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [126] = {0xd7e000, {"gpio", "sec_mi2s", "qup2", "phase_flag9", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [127] = {0xd7f000, {"gpio", "sec_mi2s", "qup2", "phase_flag4", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [128] = {0xd80000, {"gpio", "sec_mi2s", "qup2", "phase_flag21", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [129] = {0xd81000, {"gpio", "sec_mi2s", "qup2", "jitter_bist", "atest_usb21", NULL, NULL, NULL, NULL, NULL}},
++    [130] = {0xd82000, {"gpio", "sec_mi2s", "pll_bist", "atest_usb20", "atest_char0", NULL, NULL, NULL, NULL, NULL}},
++    [131] = {0xd83000, {"gpio", "ter_mi2s", "gcc_gp1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [132] = {0xd84000, {"gpio", "ter_mi2s", NULL, "qdss_gpio11", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [133] = {0xd85000, {"gpio", "ter_mi2s", "qdss_gpio8", "atest_char1", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [134] = {0xd86000, {"gpio", "ter_mi2s", "qdss_gpio9", "atest_char2", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [135] = {0xd87000, {"gpio", "ter_mi2s", "atest_char3", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [136] = {0xd88000, {"gpio", "qua_mi2s", "gcc_gp1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [137] = {0xd89000, {"gpio", "qua_mi2s", "gcc_gp2", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [138] = {0xd8a000, {"gpio", "qua_mi2s", "gcc_gp3", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [139] = {0xd8b000, {"gpio", "qua_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [140] = {0xd8c000, {"gpio", "qua_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [141] = {0xd8d000, {"gpio", "qua_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [142] = {0xd8e000, {"gpio", "qua_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [143] = {0xd8f000, {"gpio", "pri_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [144] = {0xd90000, {"gpio", "pri_mi2s", "qup3", "phase_flag29", NULL, "ddr_pxi0", NULL, NULL, NULL, NULL}},
++    [145] = {0xd91000, {"gpio", "pri_mi2s_ws", "qup3", "phase_flag28", "ddr_bist", NULL, "vsense_trigger", "atest_usb1", "ddr_pxi0", NULL}},
++    [146] = {0xd92000, {"gpio", "pri_mi2s", "qup3", "ddr_bist", "atest_usb11", "ddr_pxi2", NULL, NULL, NULL, NULL}},
++    [147] = {0xd93000, {"gpio", "pri_mi2s", "qup3", "dbg_out", "atest_usb10", "ddr_pxi2", NULL, NULL, NULL, NULL}},
++    [148] = {0xd94000, {"gpio", "spkr_i2s", "audio_ref", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [149] = {0xd95000, {"gpio", "lpass_slimbus", "spkr_i2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [150] = {0xd96000, {"gpio", "lpass_slimbus", "spkr_i2s", "tsense_pwm1", "tsense_pwm2", NULL, NULL, NULL, NULL, NULL}},
++    [151] = {0xd97000, {"gpio", "lpass_slimbus", "spkr_i2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [152] = {0xd98000, {"gpio", "lpass_slimbus", "spkr_i2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [153] = {0xd99000, {"gpio", "btfm_slimbus", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [154] = {0xd9a000, {"gpio", "btfm_slimbus", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [155] = {0x19b000, {"gpio", "hs1_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [156] = {0x19c000, {"gpio", "hs1_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [157] = {0x19d000, {"gpio", "hs1_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [158] = {0x19e000, {"gpio", "hs1_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [159] = {0x19f000, {"gpio", "hs1_mi2s", "cri_trng0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [160] = {0x1a0000, {"gpio", "hs2_mi2s", "cri_trng1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [161] = {0x1a1000, {"gpio", "hs2_mi2s", "cri_trng", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [162] = {0x1a2000, {"gpio", "hs2_mi2s", "sp_cmu", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [163] = {0x1a3000, {"gpio", "hs2_mi2s", "prng_rosc", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [164] = {0x1a4000, {"gpio", "hs2_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [165] = {0x1a5000, {"gpio", "hs3_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [166] = {0x1a6000, {"gpio", "hs3_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [167] = {0x1a7000, {"gpio", "hs3_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [168] = {0x1a8000, {"gpio", "hs3_mi2s", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [169] = {0x9a9000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [170] = {0x9aa000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [171] = {0x9ab000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [172] = {0x9ac000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [173] = {0x9ad000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [174] = {0x9ae000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++};
++static const struct CrAndroidClock clocks_8150[] = {
++    {81, 0x5200c, 1U << 10, 0x17144, 0x17148}, /* gcc_qupv3_wrap0_s0_clk */
++    {83, 0x5200c, 1U << 11, 0x17274, 0x17278}, /* gcc_qupv3_wrap0_s1_clk */
++    {85, 0x5200c, 1U << 12, 0x173a4, 0x173a8}, /* gcc_qupv3_wrap0_s2_clk */
++    {87, 0x5200c, 1U << 13, 0x174d4, 0x174d8}, /* gcc_qupv3_wrap0_s3_clk */
++    {89, 0x5200c, 1U << 14, 0x17604, 0x17608}, /* gcc_qupv3_wrap0_s4_clk */
++    {91, 0x5200c, 1U << 15, 0x17734, 0x17738}, /* gcc_qupv3_wrap0_s5_clk */
++    {93, 0x5200c, 1U << 16, 0x17864, 0x17868}, /* gcc_qupv3_wrap0_s6_clk */
++    {95, 0x5200c, 1U << 17, 0x17994, 0x17998}, /* gcc_qupv3_wrap0_s7_clk */
++    {97, 0x5200c, 1U << 22, 0x18144, 0x18148}, /* gcc_qupv3_wrap1_s0_clk */
++    {99, 0x5200c, 1U << 23, 0x18274, 0x18278}, /* gcc_qupv3_wrap1_s1_clk */
++    {101, 0x5200c, 1U << 24, 0x183a4, 0x183a8}, /* gcc_qupv3_wrap1_s2_clk */
++    {103, 0x5200c, 1U << 25, 0x184d4, 0x184d8}, /* gcc_qupv3_wrap1_s3_clk */
++    {105, 0x5200c, 1U << 26, 0x18604, 0x18608}, /* gcc_qupv3_wrap1_s4_clk */
++    {107, 0x5200c, 1U << 27, 0x18734, 0x18738}, /* gcc_qupv3_wrap1_s5_clk */
++    {109, 0x52014, 1U << 4, 0x1e144, 0x1e148}, /* gcc_qupv3_wrap2_s0_clk */
++    {111, 0x52014, 1U << 5, 0x1e274, 0x1e278}, /* gcc_qupv3_wrap2_s1_clk */
++    {113, 0x52014, 1U << 6, 0x1e3a4, 0x1e3a8}, /* gcc_qupv3_wrap2_s2_clk */
++    {115, 0x52014, 1U << 7, 0x1e4d4, 0x1e4d8}, /* gcc_qupv3_wrap2_s3_clk */
++    {117, 0x52014, 1U << 8, 0x1e604, 0x1e608}, /* gcc_qupv3_wrap2_s4_clk */
++    {119, 0x52014, 1U << 9, 0x1e734, 0x1e738}, /* gcc_qupv3_wrap2_s5_clk */
++    {121, 0x5200c, 1U << 6, 0x17004, 0}, /* gcc_qupv3_wrap_0_m_ahb_clk */
++    {122, 0x5200c, 1U << 7, 0x17008, 0}, /* gcc_qupv3_wrap_0_s_ahb_clk */
++    {123, 0x5200c, 1U << 20, 0x18004, 0}, /* gcc_qupv3_wrap_1_m_ahb_clk */
++    {124, 0x5200c, 1U << 21, 0x18008, 0}, /* gcc_qupv3_wrap_1_s_ahb_clk */
++    {125, 0x52014, 1U << 2, 0x1e004, 0}, /* gcc_qupv3_wrap_2_m_ahb_clk */
++    {126, 0x52014, 1U << 1, 0x1e008, 0}, /* gcc_qupv3_wrap_2_s_ahb_clk */
++};
++static const struct CrAndroidPin pins_8250[] = {
++    [0] = {0x500000, {"gpio", "qup19", "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [1] = {0x501000, {"gpio", "qup19", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [2] = {0x502000, {"gpio", "qup19", "qdss_cti", "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [3] = {0x503000, {"gpio", "qup19", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [4] = {0x904000, {"gpio", "qup1", "ibi_i3c", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [5] = {0x905000, {"gpio", "qup1", "ibi_i3c", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [6] = {0x906000, {"gpio", "qup1", "qup_l4", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [7] = {0x907000, {"gpio", "qup1", "qup_l5", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [8] = {0x908000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [9] = {0x909000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [10] = {0x90a000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [11] = {0x90b000, {"gpio", "qup4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [12] = {0x90c000, {"gpio", "qup5", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [13] = {0x90d000, {"gpio", "qup5", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [14] = {0x90e000, {"gpio", "qup5", "qup_l4", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [15] = {0x90f000, {"gpio", "qup5", "qup_l5", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [16] = {0x910000, {"gpio", "qup6", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [17] = {0x911000, {"gpio", "qup6", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [18] = {0x912000, {"gpio", "qup6", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [19] = {0x913000, {"gpio", "qup6", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [20] = {0x914000, {"gpio", "qup7", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [21] = {0x915000, {"gpio", "qup7", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [22] = {0x916000, {"gpio", "qup7", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [23] = {0x917000, {"gpio", "qup7", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [24] = {0x518000, {"gpio", "qup8", "ibi_i3c", "atest_usb13", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [25] = {0x519000, {"gpio", "qup8", "ibi_i3c", "atest_usb12", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [26] = {0x51a000, {"gpio", "qup8", "atest_usb11", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [27] = {0x51b000, {"gpio", "qup8", "atest_usb10", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [28] = {0x91c000, {"gpio", "qup0", "ibi_i3c", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [29] = {0x91d000, {"gpio", "qup0", "ibi_i3c", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [30] = {0x91e000, {"gpio", "qup0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [31] = {0x91f000, {"gpio", "qup0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [32] = {0x520000, {"gpio", "qup12", NULL, "atest_usb03", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [33] = {0x521000, {"gpio", "qup12", "atest_usb02", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [34] = {0x522000, {"gpio", "qup12", "atest_usb01", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [35] = {0x523000, {"gpio", "qup12", "atest_usb00", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [36] = {0x524000, {"gpio", "qup13", "atest_usb1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [37] = {0x525000, {"gpio", "qup13", "atest_usb0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [38] = {0x526000, {"gpio", "qup13", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [39] = {0x527000, {"gpio", "qup13", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [40] = {0x528000, {"gpio", "qup14", "ibi_i3c", NULL, "ddr_pxi3", NULL, NULL, NULL, NULL, NULL}},
++    [41] = {0x529000, {"gpio", "qup14", "ibi_i3c", NULL, "ddr_pxi1", NULL, NULL, NULL, NULL, NULL}},
++    [42] = {0x52a000, {"gpio", "qup14", "vsense_trigger", "ddr_pxi1", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [43] = {0x52b000, {"gpio", "qup14", "ddr_pxi3", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [44] = {0x52c000, {"gpio", "qup15", "qdss_cti", "dbg_out", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [45] = {0x52d000, {"gpio", "qup15", "qdss_cti", "phase_flag31", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [46] = {0x52e000, {"gpio", "qup15", "qup_l4", "qdss_cti", "phase_flag30", NULL, NULL, NULL, NULL, NULL}},
++    [47] = {0x52f000, {"gpio", "qup15", "qup_l5", "phase_flag29", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [48] = {0x530000, {"gpio", "qup16", "phase_flag28", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [49] = {0x531000, {"gpio", "qup16", "phase_flag27", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [50] = {0x532000, {"gpio", "qup16", "phase_flag26", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [51] = {0x533000, {"gpio", "qup16", "phase_flag25", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [52] = {0x534000, {"gpio", "qup17", "ddr_pxi0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [53] = {0x535000, {"gpio", "qup17", "ddr_pxi0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [54] = {0x536000, {"gpio", "qup17", "jitter_bist", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [55] = {0x537000, {"gpio", "qup17", "pll_bist", "ddr_pxi2", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [56] = {0x538000, {"gpio", "qup18", "ddr_pxi2", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [57] = {0x539000, {"gpio", "qup18", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [58] = {0x53a000, {"gpio", "qup18", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [59] = {0x53b000, {"gpio", "qup18", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [60] = {0x53c000, {"gpio", "qup11", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [61] = {0x53d000, {"gpio", "qup11", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [62] = {0x53e000, {"gpio", "qup11", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [63] = {0x53f000, {"gpio", "qup11", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [64] = {0x540000, {"gpio", "usb2phy_ac", "qup_l6", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [65] = {0x541000, {"gpio", "usb_phy", "pll_clk", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [66] = {0x942000, {"gpio", "mdp_vsync", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [67] = {0x943000, {"gpio", "mdp_vsync", "dp_lcd", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [68] = {0x944000, {"gpio", "mdp_vsync", "dp_hot", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [69] = {0x545000, {"gpio", "qspi_cs", "tsif0_clk", "phase_flag24", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [70] = {0x546000, {"gpio", "qspi0", "tsif0_en", "mdp_vsync0", "mdp_vsync1", "mdp_vsync2", "mdp_vsync3", "phase_flag23", NULL, NULL}},
++    [71] = {0x547000, {"gpio", "qspi1", "tsif0_data", "sdc4_cmd", "phase_flag22", NULL, NULL, NULL, NULL, NULL}},
++    [72] = {0x548000, {"gpio", "qspi2", "tsif0_sync", "sdc43", "phase_flag21", NULL, NULL, NULL, NULL, NULL}},
++    [73] = {0x549000, {"gpio", "qspi_clk", "tsif1_clk", "sdc4_clk", "phase_flag20", NULL, NULL, NULL, NULL, NULL}},
++    [74] = {0x54a000, {"gpio", "qspi3", "tsif1_en", "sdc42", "phase_flag19", NULL, NULL, NULL, NULL, NULL}},
++    [75] = {0x54b000, {"gpio", "qspi_cs", "tsif1_data", "sdc41", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [76] = {0x54c000, {"gpio", "tsif1_sync", "sdc40", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [77] = {0x94d000, {"gpio", "qup_l6", "aoss_cti", "phase_flag18", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [78] = {0x94e000, {"gpio", "sd_write", "phase_flag17", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [79] = {0x94f000, {"gpio", "pci_e0", "phase_flag16", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [80] = {0x950000, {"gpio", "pci_e0", "phase_flag15", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [81] = {0x951000, {"gpio", "phase_flag14", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [82] = {0x952000, {"gpio", "pci_e1", "phase_flag13", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [83] = {0x953000, {"gpio", "pci_e1", "phase_flag12", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [84] = {0x954000, {"gpio", "phase_flag11", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [85] = {0x555000, {"gpio", "pci_e2", "tgu_ch0", "atest_char1", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [86] = {0x556000, {"gpio", "pci_e2", "tgu_ch3", "atest_char2", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [87] = {0x557000, {"gpio", "atest_char3", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [88] = {0x558000, {"gpio", NULL, "atest_char", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [89] = {0x559000, {"gpio", NULL, "atest_char0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [90] = {0x55a000, {"gpio", "tsif1_error", "usb2phy_ac", "tgu_ch1", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [91] = {0x55b000, {"gpio", "tsif0_error", "tgu_ch2", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [92] = {0x95c000, {"gpio", "qup_l6", "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [93] = {0x95d000, {"gpio", "qup_l6", "qdss_cti", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [94] = {0x95e000, {"gpio", "cam_mclk", "ddr_bist", "qdss_gpio0", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [95] = {0x95f000, {"gpio", "cam_mclk", "ddr_bist", "qdss_gpio1", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [96] = {0x960000, {"gpio", "cam_mclk", "pll_bypassnl", "qdss_gpio2", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [97] = {0x961000, {"gpio", "cam_mclk", "pll_reset", "qdss_gpio3", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [98] = {0x962000, {"gpio", "cam_mclk", "qdss_gpio4", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [99] = {0x963000, {"gpio", "cam_mclk", "qdss_gpio5", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [100] = {0x964000, {"gpio", "cam_mclk", "qdss_gpio6", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [101] = {0x965000, {"gpio", "cci_i2c", "qdss_gpio7", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [102] = {0x966000, {"gpio", "cci_i2c", "qdss_gpio8", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [103] = {0x967000, {"gpio", "cci_i2c", "phase_flag10", NULL, "qdss_gpio", NULL, NULL, NULL, NULL, NULL}},
++    [104] = {0x968000, {"gpio", "cci_i2c", "phase_flag9", NULL, "qdss_gpio", NULL, NULL, NULL, NULL, NULL}},
++    [105] = {0x969000, {"gpio", "cci_i2c", "qdss_gpio9", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [106] = {0x96a000, {"gpio", "cci_i2c", "gcc_gp1", "qdss_gpio10", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [107] = {0x96b000, {"gpio", "cci_i2c", "gcc_gp2", "qdss_gpio11", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [108] = {0x96c000, {"gpio", "cci_i2c", "gcc_gp3", "qdss_gpio12", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [109] = {0x96d000, {"gpio", "cci_timer0", "qdss_gpio13", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [110] = {0x96e000, {"gpio", "cci_timer1", "qdss_gpio14", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [111] = {0x96f000, {"gpio", "cci_timer2", "qdss_gpio15", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [112] = {0x970000, {"gpio", "cci_timer3", "cci_async", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [113] = {0x971000, {"gpio", "cci_timer4", "cci_async", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [114] = {0x972000, {"gpio", "cci_async", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [115] = {0x973000, {"gpio", "qup2", "phase_flag8", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [116] = {0x974000, {"gpio", "qup2", "phase_flag7", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [117] = {0x975000, {"gpio", "qup2", "phase_flag6", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [118] = {0x976000, {"gpio", "qup2", "phase_flag5", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [119] = {0x977000, {"gpio", "qup3", "phase_flag4", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [120] = {0x978000, {"gpio", "qup3", "phase_flag3", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [121] = {0x979000, {"gpio", "qup3", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [122] = {0x97a000, {"gpio", "qup3", "mdp_vsync", "phase_flag2", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [123] = {0x97b000, {"gpio", "qup_l4", "tsense_pwm1", "tsense_pwm2", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [124] = {0x97c000, {"gpio", "qup_l5", "mdp_vsync", "phase_flag1", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [125] = {0x57d000, {"gpio", "qup9", "phase_flag0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [126] = {0x57e000, {"gpio", "qup9", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [127] = {0x57f000, {"gpio", "qup9", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [128] = {0x580000, {"gpio", "qup9", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [129] = {0x581000, {"gpio", "qup10", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [130] = {0x582000, {"gpio", "qup10", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [131] = {0x583000, {"gpio", "qup10", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [132] = {0x584000, {"gpio", "qup10", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [133] = {0x185000, {"gpio", "mi2s2_sck", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [134] = {0x186000, {"gpio", "mi2s2_data0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [135] = {0x187000, {"gpio", "mi2s2_ws", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [136] = {0x188000, {"gpio", "pri_mi2s", "gcc_gp1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [137] = {0x189000, {"gpio", "sec_mi2s", "audio_ref", "mi2s2_data1", "gcc_gp2", NULL, NULL, NULL, NULL, NULL}},
++    [138] = {0x18a000, {"gpio", "mi2s0_sck", "gcc_gp3", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [139] = {0x18b000, {"gpio", "mi2s0_data0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [140] = {0x18c000, {"gpio", "mi2s0_data1", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [141] = {0x18d000, {"gpio", "mi2s0_ws", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [142] = {0x18e000, {"gpio", "lpass_slimbus", "mi2s1_sck", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [143] = {0x18f000, {"gpio", "lpass_slimbus", "mi2s1_data0", "ddr_bist", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [144] = {0x190000, {"gpio", "lpass_slimbus", "mi2s1_data1", "ddr_bist", NULL, NULL, NULL, NULL, NULL, NULL}},
++    [145] = {0x191000, {"gpio", "lpass_slimbus", "mi2s1_ws", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [146] = {0x192000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [147] = {0x193000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [148] = {0x194000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [149] = {0x195000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [150] = {0x196000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [151] = {0x197000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [152] = {0x198000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [153] = {0x199000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [154] = {0x19a000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [155] = {0x19b000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [156] = {0x19c000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [157] = {0x19d000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [158] = {0x19e000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [159] = {0x19f000, {"gpio", "cri_trng0", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [160] = {0x1a0000, {"gpio", "cri_trng1", "qdss_gpio0", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [161] = {0x1a1000, {"gpio", "cri_trng", "qdss_gpio1", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [162] = {0x1a2000, {"gpio", "sp_cmu", "qdss_gpio2", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [163] = {0x1a3000, {"gpio", "prng_rosc", "qdss_gpio3", NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [164] = {0x1a4000, {"gpio", "qdss_gpio4", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [165] = {0x1a5000, {"gpio", "qdss_gpio5", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [166] = {0x1a6000, {"gpio", "qdss_gpio6", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [167] = {0x1a7000, {"gpio", "qdss_gpio7", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [168] = {0x1a8000, {"gpio", "qdss_gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [169] = {0x1a9000, {"gpio", "qdss_gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [170] = {0x1aa000, {"gpio", "qdss_gpio8", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [171] = {0x1ab000, {"gpio", "qdss_gpio9", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [172] = {0x1ac000, {"gpio", "qdss_gpio10", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [173] = {0x1ad000, {"gpio", "qdss_gpio11", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [174] = {0x1ae000, {"gpio", "qdss_gpio12", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [175] = {0x1af000, {"gpio", "qdss_gpio13", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [176] = {0x1b0000, {"gpio", "qdss_gpio14", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [177] = {0x1b1000, {"gpio", "qdss_gpio15", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [178] = {0x1b2000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++    [179] = {0x1b3000, {"gpio", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}},
++};
++static const struct CrAndroidClock clocks_8250[] = {
++    {86, 0x52008, 1U << 9, 0x23008, 0}, /* gcc_qupv3_wrap0_core_2x_clk */
++    {87, 0x52008, 1U << 8, 0x23000, 0}, /* gcc_qupv3_wrap0_core_clk */
++    {88, 0x52008, 1U << 10, 0x1700c, 0x17010}, /* gcc_qupv3_wrap0_s0_clk */
++    {90, 0x52008, 1U << 11, 0x1713c, 0x17140}, /* gcc_qupv3_wrap0_s1_clk */
++    {92, 0x52008, 1U << 12, 0x1726c, 0x17270}, /* gcc_qupv3_wrap0_s2_clk */
++    {94, 0x52008, 1U << 13, 0x1739c, 0x173a0}, /* gcc_qupv3_wrap0_s3_clk */
++    {96, 0x52008, 1U << 14, 0x174cc, 0x174d0}, /* gcc_qupv3_wrap0_s4_clk */
++    {98, 0x52008, 1U << 15, 0x175fc, 0x17600}, /* gcc_qupv3_wrap0_s5_clk */
++    {100, 0x52008, 1U << 16, 0x1772c, 0x17730}, /* gcc_qupv3_wrap0_s6_clk */
++    {102, 0x52008, 1U << 17, 0x1785c, 0x17860}, /* gcc_qupv3_wrap0_s7_clk */
++    {104, 0x52008, 1U << 18, 0x23140, 0}, /* gcc_qupv3_wrap1_core_2x_clk */
++    {105, 0x52008, 1U << 19, 0x23138, 0}, /* gcc_qupv3_wrap1_core_clk */
++    {106, 0x52008, 1U << 22, 0x1800c, 0x18010}, /* gcc_qupv3_wrap1_s0_clk */
++    {108, 0x52008, 1U << 23, 0x1813c, 0x18140}, /* gcc_qupv3_wrap1_s1_clk */
++    {110, 0x52008, 1U << 24, 0x1826c, 0x18270}, /* gcc_qupv3_wrap1_s2_clk */
++    {112, 0x52008, 1U << 25, 0x1839c, 0x183a0}, /* gcc_qupv3_wrap1_s3_clk */
++    {114, 0x52008, 1U << 26, 0x184cc, 0x184d0}, /* gcc_qupv3_wrap1_s4_clk */
++    {116, 0x52008, 1U << 27, 0x185fc, 0x18600}, /* gcc_qupv3_wrap1_s5_clk */
++    {118, 0x52010, 1U << 3, 0x23278, 0}, /* gcc_qupv3_wrap2_core_2x_clk */
++    {119, 0x52010, 1U << 0, 0x23270, 0}, /* gcc_qupv3_wrap2_core_clk */
++    {120, 0x52010, 1U << 4, 0x1e00c, 0x1e010}, /* gcc_qupv3_wrap2_s0_clk */
++    {122, 0x52010, 1U << 5, 0x1e13c, 0x1e140}, /* gcc_qupv3_wrap2_s1_clk */
++    {124, 0x52010, 1U << 6, 0x1e26c, 0x1e270}, /* gcc_qupv3_wrap2_s2_clk */
++    {126, 0x52010, 1U << 7, 0x1e39c, 0x1e3a0}, /* gcc_qupv3_wrap2_s3_clk */
++    {128, 0x52010, 1U << 8, 0x1e4cc, 0x1e4d0}, /* gcc_qupv3_wrap2_s4_clk */
++    {130, 0x52010, 1U << 9, 0x1e5fc, 0x1e600}, /* gcc_qupv3_wrap2_s5_clk */
++    {132, 0x52008, 1U << 6, 0x17004, 0}, /* gcc_qupv3_wrap_0_m_ahb_clk */
++    {133, 0x52008, 1U << 7, 0x17008, 0}, /* gcc_qupv3_wrap_0_s_ahb_clk */
++    {134, 0x52008, 1U << 20, 0x18004, 0}, /* gcc_qupv3_wrap_1_m_ahb_clk */
++    {135, 0x52008, 1U << 21, 0x18008, 0}, /* gcc_qupv3_wrap_1_s_ahb_clk */
++    {136, 0x52010, 1U << 2, 0x1e004, 0}, /* gcc_qupv3_wrap_2_m_ahb_clk */
++    {137, 0x52010, 1U << 1, 0x1e008, 0}, /* gcc_qupv3_wrap_2_s_ahb_clk */
++};
++
++#define COUNT(a) (sizeof(a) / sizeof((a)[0]))
++const struct CrAndroidPin *CrAndroidPin(unsigned soc, unsigned pin)
++{
++    if (soc == 8150 && pin < COUNT(pins_8150)) return &pins_8150[pin];
++    if (soc == 8250 && pin < COUNT(pins_8250)) return &pins_8250[pin];
++    return NULL;
++}
++const struct CrAndroidClock *CrAndroidClock(unsigned soc, unsigned id)
++{
++    const struct CrAndroidClock *table;
++    size_t count;
++    if (soc == 8150) { table = clocks_8150; count = COUNT(clocks_8150); }
++    else if (soc == 8250) { table = clocks_8250; count = COUNT(clocks_8250); }
++    else return NULL;
++    for (size_t i = 0; i < count; ++i) if (table[i].id == id) return table + i;
++    return NULL;
++}
+diff --git a/Library/ClockLib/clock.c b/Library/ClockLib/clock.c
+index 57a1284..f43736d 100644
+--- a/Library/ClockLib/clock.c
++++ b/Library/ClockLib/clock.c
+@@ -130,7 +130,7 @@ ClockRcg2UpdateConfig(
+           CLOCK_NODE_RCG_CMD_REGISTER_CMD_UPDATE_MSK)) {
+       return CR_SUCCESS;
+     }
+-    MicroSecondDelay(1);
++    cr_sleep(1);
+   }
+ 
+   log_err("Timeout waiting for RCG2 clock " CR_LOG_CHAR8_STR_FMT " update", TargetClockNode->Name);
+@@ -341,7 +341,7 @@ ClockEnableInternal(
+           TargetClockNode->MuxRegister,
+         TargetClockNode->MuxMask,
+         Value);
+-    MemoryFence();
++    CR_MEM_BARRIER_DATA_SYN_BARRIAR();
+     TargetClockNode->ReferenceCount = Enable ? 1U : 0U;
+     TargetClockNode->ActiveRateHz = Enable ? RateHz : 0;
+     if (!Enable) {
+@@ -364,7 +364,7 @@ ClockEnableInternal(
+           CommandAddress, CLOCK_NODE_RCG_CMD_REGISTER_CMD_ROOT_EN_MSK,
+           TargetClockNode->RestoreControlEnabled ?
+             CLOCK_NODE_RCG_CMD_REGISTER_CMD_ROOT_EN_MSK : 0);
+-      MemoryFence();
++      CR_MEM_BARRIER_DATA_SYN_BARRIAR();
+       TargetClockNode->ReferenceCount = 0;
+       TargetClockNode->ActiveRateHz = 0;
+       TargetClockNode->RestoreControlEnabled = FALSE;
+@@ -380,7 +380,7 @@ ClockEnableInternal(
+         if (ClockRcg2CheckEnable(ClockContext, TargetClockNode)) {
+           break;
+         }
+-        MicroSecondDelay(1);
++        cr_sleep(1);
+       }
+       if (Index == CLOCK_RCG2_UPDATE_TIMEOUT_US) {
+         CrMmioUpdateBits32(
+@@ -501,7 +501,7 @@ ClockEnableInternal(
+           Status = CR_SUCCESS;
+           break;
+         }
+-        MicroSecondDelay(1);
++        cr_sleep(1);
+       }
+       if (CR_ERROR(Status)) {
+         log_err(
+diff --git a/Library/ClockLib/clock.inf b/Library/ClockLib/clock.inf
+index 810cb18..dac5de1 100644
+--- a/Library/ClockLib/clock.inf
++++ b/Library/ClockLib/clock.inf
+@@ -19,6 +19,7 @@
+   EmbeddedPkg/EmbeddedPkg.dec
+ 
+ [LibraryClasses]
++  GeniSeLib
+   ArmLib
+   DebugLib
+   IoLib
+@@ -29,3 +30,4 @@
+   clock.c
+   gdsc.c
+   debugcc.c
++  clock_poll.c
+diff --git a/Library/ClockLib/clock_poll.c b/Library/ClockLib/clock_poll.c
+new file mode 100644
+index 0000000..42db5a0
+--- /dev/null
++++ b/Library/ClockLib/clock_poll.c
+@@ -0,0 +1,83 @@
++/* Copyright (c) 2025-2026 Project Aloha Authors and Kancy Joe.
++ * SPDX-License-Identifier: MIT */
++#include <Library/cr_resources.h>
++#include "../GeniSeLib/resource_io.h"
++static bool valid(const struct CrQupContext *p)
++{
++    if (!p || !p->board || !CrIoValid(&p->io)) return false;
++    const struct CrQupResources *r = p->board;
++    const uintptr_t regs[] = {r->vote, r->rcg, r->ahb_halt[0], r->ahb_halt[1], r->serial_halt};
++    for (unsigned i = 0; i < sizeof(regs) / sizeof(regs[0]); ++i)
++        if (!regs[i] || (regs[i] & 3) || regs[i] > UINTPTR_MAX - 4) return false;
++    return r->rcg <= UINTPTR_MAX - 0x3c && r->geni && !(r->geni & 3) &&
++        r->geni_size >= 0x44 && r->geni <= UINTPTR_MAX - r->geni_size &&
++        r->serial_vote && r->ahb_votes && !(r->serial_vote & r->ahb_votes);
++}
++int CrClockPollPrepare(struct CrQupContext *p, uint8_t *index)
++{
++    if (!valid(p) || !index) return CR_BUS_INVALID;
++    if (p->clocks_claimed || p->rcg_changed) return CR_BUS_BUSY;
++    const struct CrQupResources *board = p->board;
++    uint32_t wanted = board->ahb_votes | board->serial_vote;
++    uint32_t old_vote = rd(p, board->vote);
++    p->added_clock_votes = wanted & ~old_vote;
++    p->clocks_claimed = true;
++    wr(p, board->vote, old_vote | board->ahb_votes);
++    int status = wait_bits(p, board->ahb_halt[0], CR_RESOURCE_BIT(31), 0);
++    if (!status)
++        status = wait_bits(p, board->ahb_halt[1], CR_RESOURCE_BIT(31), 0);
++    if (status)
++        return status;
++    /* The AHB window is now accessible. Never retune an inherited active SE. */
++    if (rd(p, board->geni + 0x40U) & (CR_RESOURCE_BIT(0) | CR_RESOURCE_BIT(12)))
++        return CR_BUS_BUSY;
++    if (rd(p, board->rcg + 0x14U) & 1U) {
++        /* DFS tables are owned by boot firmware. Select a verified 19.2 MHz
++         * undivided CXO entry without rewriting the table or enabling PLLs. */
++        bool found = false;
++        for (unsigned i = 0; i < 8; ++i) {
++            uint32_t cfg = rd(p, board->rcg + 0x1cU + i * 4U);
++            if ((cfg & ((7U << 8) | (3U << 12))) == 0 && (cfg & 0x1fU) <= 1U) {
++                *index = (uint8_t)i;
++                found = true;
++                break;
++            }
++        }
++        if (!found)
++            return CR_BUS_UNSUPPORTED;
++    } else {
++        p->saved_rcg_config = rd(p, board->rcg + 4U);
++        uint32_t next = (p->saved_rcg_config & ~RCG_CFG_MASK) | 1U;
++        if (next != p->saved_rcg_config) {
++            p->rcg_changed = true;
++            wr(p, board->rcg + 4U, next);
++            rmw(p, board->rcg, 1U, 1U);
++            status = wait_bits(p, board->rcg, 1U, 0);
++            if (status)
++                return status;
++        }
++        *index = 0;
++    }
++    rmw(p, board->vote, board->serial_vote, board->serial_vote);
++    return wait_bits(p, board->serial_halt, CR_RESOURCE_BIT(31), 0);
++}
++
++
++int CrClockPollRestore(struct CrQupContext *p)
++{
++    if (!valid(p)) return CR_BUS_INVALID;
++    int status;
++    if (p->rcg_changed) {
++        wr(p, p->board->rcg + 4U, p->saved_rcg_config);
++        rmw(p, p->board->rcg, 1U, 1U);
++        status = wait_bits(p, p->board->rcg, 1U, 0);
++        if (status)
++            return status;
++        p->rcg_changed = false;
++    }
++    if (p->clocks_claimed) {
++        rmw(p, p->board->vote, p->added_clock_votes, 0);
++        p->clocks_claimed = false;
++    }
++    return 0;
++}
+diff --git a/Library/ClockLib/gdsc.c b/Library/ClockLib/gdsc.c
+index 3e36969..23a4f33 100644
+--- a/Library/ClockLib/gdsc.c
++++ b/Library/ClockLib/gdsc.c
+@@ -1,4 +1,4 @@
+-#include <clock_internal.h>
++#include "clock_internal.h"
+ 
+ #define CLOCK_GDSC_REG_PWR_ON_MSK BIT(31)
+ #define CLOCK_GDSC_REG_EN_REST_WAIT_MSK GEN_MSK(23, 20)
+@@ -97,7 +97,7 @@ ClockGdscToggleEnable(
+         return CR_SUCCESS;
+       }
+ 
+-      MicroSecondDelay(1);
++      cr_sleep(1);
+     }
+   }
+   log_err(
+diff --git a/Library/CmdDBLib/cmddb.inf b/Library/CmdDBLib/cmddb.inf
+index 5ab43d8..7971f5b 100644
+--- a/Library/CmdDBLib/cmddb.inf
++++ b/Library/CmdDBLib/cmddb.inf
+@@ -17,6 +17,7 @@
+   CranePkg/CranePkg.dec
+ 
+ [LibraryClasses]
++  GeniSeLib
+   ArmLib
+   DebugLib
+   IoLib
+@@ -26,3 +27,4 @@
+ 
+ [Sources.common]
+   cmddb.c
++  cmddb_bounded.c
+diff --git a/Library/CmdDBLib/cmddb_bounded.c b/Library/CmdDBLib/cmddb_bounded.c
+new file mode 100644
+index 0000000..c226706
+--- /dev/null
++++ b/Library/CmdDBLib/cmddb_bounded.c
+@@ -0,0 +1,65 @@
++/* Copyright (c) 2025-2026 Project Aloha Authors and Kancy Joe.
++ * SPDX-License-Identifier: MIT */
++#include <Library/cr_resources.h>
++#include "../GeniSeLib/resource_io.h"
++static uint16_t db16(const struct CrIo *io, uintptr_t address)
++{
++    return (uint16_t)(read_io(io, address & ~(uintptr_t)3) >> ((address & 2U) * 8U));
++}
++
++int CrCmdDbLookup(const struct CrIo *io, uintptr_t base,
++                                size_t size, const char *name, uint32_t *address)
++{
++    uint32_t wanted[2] = {0, 0};
++    size_t length = 0;
++    if (!CrIoValid(io) || !name || !address)
++        return CR_BUS_INVALID;
++    while (length < 8 && name[length]) {
++        wanted[length / 4U] |= (uint32_t)(uint8_t)name[length] << ((length % 4U) * 8U);
++        ++length;
++    }
++    if (!length || (length == 8 && name[8]))
++        return CR_BUS_INVALID;
++    /* Both board profiles use a bounded 32-bit physical RAM region. */
++    if (base == 0 || (base & 3U) || size < CMD_DB_HEADER_SIZE ||
++        size > CMD_DB_MAX_SIZE || base > UINTPTR_MAX - size ||
++        read_io(io, (uintptr_t)base + 4U) != CMD_DB_MAGIC)
++        return CR_BUS_INVALID;
++    for (unsigned slave = 0; slave < 8; ++slave) {
++        uintptr_t header = (uintptr_t)base + 8U + slave * 16U;
++        unsigned slave_id = db16(io, header);
++        if (!slave_id)
++            continue;
++        uint32_t offset = db16(io, header + 2U);
++        uint32_t count = db16(io, header + 6U);
++        uint32_t bytes = size - CMD_DB_HEADER_SIZE;
++        if ((offset & 3U) || offset > bytes || count > (bytes - offset) / 24U)
++            return CR_BUS_INVALID;
++        for (uint32_t i = 0; i < count; ++i) {
++            uintptr_t entry = (uintptr_t)base + CMD_DB_HEADER_SIZE + offset + i * 24U;
++            if (read_io(io, entry) != wanted[0] || read_io(io, entry + 4U) != wanted[1])
++                continue;
++            uint32_t result = read_io(io, entry + 16U);
++            if (!result || (result & 3U) || ((result >> 16) & 7U) != slave_id)
++                return CR_BUS_INVALID;
++            uint32_t aux_offset = db16(io, header + 4U);
++            uint32_t aux_length = db16(io, entry + 20U);
++            uint32_t aux_entry_offset = db16(io, entry + 22U);
++            if (aux_offset > bytes || aux_entry_offset > bytes - aux_offset ||
++                aux_length > bytes - aux_offset - aux_entry_offset)
++                return CR_BUS_INVALID;
++            *address = result;
++            return 0;
++        }
++    }
++    return CR_BUS_UNSUPPORTED;
++}
++
++int CrCmdDbLookupDictionary(const struct CrIo *io, uintptr_t dictionary,
++                        const char *name, uint32_t *address)
++{
++    if (!CrIoValid(io) || !dictionary || (dictionary & 3U) || dictionary > UINTPTR_MAX - 8U)
++        return CR_BUS_INVALID;
++    return CrCmdDbLookup(io, read_io(io, dictionary), read_io(io, dictionary + 4U),
++                                name, address);
++}
+diff --git a/Library/DebugUartLib/debug_uart.inf b/Library/DebugUartLib/debug_uart.inf
+index a7425d6..7a6756d 100644
+--- a/Library/DebugUartLib/debug_uart.inf
++++ b/Library/DebugUartLib/debug_uart.inf
+@@ -19,6 +19,7 @@
+   CranePkg/CranePkg.dec
+ 
+ [LibraryClasses]
++  GeniSeLib
+   ArmLib
+   DebugLib
+   IoLib
+@@ -27,3 +28,4 @@
+ 
+ [Sources.common]
+   debug_uart.c
++  debug_uart_poll.c
+diff --git a/Library/DebugUartLib/debug_uart_poll.c b/Library/DebugUartLib/debug_uart_poll.c
+new file mode 100644
+index 0000000..0a1eb77
+--- /dev/null
++++ b/Library/DebugUartLib/debug_uart_poll.c
+@@ -0,0 +1,157 @@
++/* SPDX-License-Identifier: MIT */
++#include <Library/cr_debug_uart_poll.h>
++#define CMD_ACTIVE (1U << 0)
++#define RX_ACTIVE (1U << 12)
++#define DONE (1U << 0)
++#define ABORT (1U << 5)
++#define ERRORS ((7U << 1) | (3U << 24) | (3U << 28))
++#define RX_ERRORS ((7U << 1) | (0x3fU << 9) | (3U << 24))
++/* IRQ enables are first so reverse restoration enables them last. */
++static const unsigned saved_offsets[] = {
++    0xe1c, 0x614, 0x644, 0x24, 0x28, 0x254, 0x260, 0x264,
++    0x284, 0x288, 0x25c, 0x2a4, 0x280, 0x2a8, 0x268,
++    0x28c, 0x26c, 0x80c, 0x810, 0x814, 0x270
++};
++static uint32_t rd(struct CrDebugUartPoll *u, unsigned off)
++{ return u->io.read32(u->io.context, u->base + off); }
++static void wr(struct CrDebugUartPoll *u, unsigned off, uint32_t v)
++{ u->io.write32(u->io.context, u->base + off, v); }
++static bool expired(struct CrDebugUartPoll *u, uint64_t start, uint32_t polls)
++{ return polls >= u->timeout_us || u->io.now_us(u->io.context) - start >= u->timeout_us; }
++static int stop(struct CrDebugUartPoll *u, bool rx)
++{
++    unsigned ctrl = rx ? 0x634 : 0x604, irq = rx ? 0x640 : 0x610;
++    uint32_t active = rx ? RX_ACTIVE : CMD_ACTIVE;
++    wr(u, irq + 8, ABORT);
++    wr(u, ctrl, 2);
++    uint64_t start = u->io.now_us(u->io.context);
++    for (uint32_t polls = 0; !expired(u, start, polls); ++polls) {
++        if ((rd(u, irq) & ABORT) && !(rd(u, 0x40) & active)) {
++            wr(u, irq + 8, ABORT);
++            return 0;
++        }
++        u->io.delay_us(u->io.context, 1);
++    }
++    u->poisoned = true;
++    return CR_BUS_TIMEOUT;
++}
++int CrDebugUartPollInit(struct CrDebugUartPoll *u)
++{
++    if (!u || !CrIoValid(&u->io) || !u->base || (u->base & 3) ||
++        u->size < 0xe2c || u->base > UINTPTR_MAX - u->size)
++        return CR_BUS_INVALID;
++    if (u->initialized || u->poisoned || u->claimed) return CR_BUS_BUSY;
++    if (!u->timeout_us) u->timeout_us = 20000;
++    if (((rd(u, 0x68) >> 8) & 0xff) != 2 || (rd(u, 0x64) & 1) || rd(u, 0x258))
++        return CR_BUS_UNSUPPORTED;
++    u->tx_depth = (rd(u, 0xe24) >> 16) & 0x3f;
++    u->rx_depth = (rd(u, 0xe28) >> 16) & 0x3f;
++    if (u->tx_depth < 2 || u->rx_depth < 2) return CR_BUS_UNSUPPORTED;
++    if (rd(u, 0x40) & CMD_ACTIVE) return CR_BUS_BUSY;
++    for (unsigned i = 0; i < sizeof(saved_offsets) / sizeof(saved_offsets[0]); ++i)
++        u->saved[i] = rd(u, saved_offsets[i]);
++    u->saved_rx_command = rd(u, 0x630);
++    u->inherited_rx = (rd(u, 0x40) & RX_ACTIVE) != 0;
++    u->claimed = true;
++    if ((rd(u, 0x40) & RX_ACTIVE) && stop(u, true)) return CR_BUS_TIMEOUT;
++    wr(u, 0xe1c, 0); wr(u, 0x614, 0); wr(u, 0x644, 0);
++    wr(u, 0x618, UINT32_MAX); wr(u, 0x648, UINT32_MAX);
++    wr(u, 0x28, rd(u, 0x28) | 0x7f); wr(u, 0x24, rd(u, 0x24) | 0x7f);
++    wr(u, 0x254, 0);
++    /* Four sequential byte lanes in one FIFO word, LSB first. */
++    uint32_t v[4];
++    for (unsigned i = 0; i < 4; ++i) v[i] = ((i * 8 + 7) << 5) | (1U << 4) | (7U << 1);
++    v[3] |= 1;
++    wr(u, 0x260, v[0] | (v[1] << 10)); wr(u, 0x264, v[2] | (v[3] << 10));
++    wr(u, 0x284, v[0] | (v[1] << 10)); wr(u, 0x288, v[2] | (v[3] << 10));
++    wr(u, 0x25c, 2); wr(u, 0x2a4, 0); wr(u, 0x280, 0); wr(u, 0x2a8, 0);
++    wr(u, 0x268, 8); wr(u, 0x28c, 8); wr(u, 0x26c, 0);
++    wr(u, 0x80c, 1); wr(u, 0x810, 1); wr(u, 0x814, u->rx_depth - 1);
++    wr(u, 0x630, 1U << 27);
++    u->rx_bytes = 0;
++    u->initialized = true;
++    return 0;
++}
++int CrDebugUartPollWrite(struct CrDebugUartPoll *u, const void *data, size_t length)
++{
++    if (!u || !u->initialized || (!data && length) || length > 0xffffff)
++        return CR_BUS_INVALID;
++    if (u->poisoned || (rd(u, 0x40) & CMD_ACTIVE)) return CR_BUS_BUSY;
++    if (!length) return 0;
++    const uint8_t *bytes = data;
++    size_t sent = 0;
++    int status = CR_BUS_TIMEOUT;
++    uint64_t start = u->io.now_us(u->io.context);
++    wr(u, 0x618, UINT32_MAX); wr(u, 0x270, length); wr(u, 0x600, 1U << 27);
++    for (uint32_t polls = 0; !expired(u, start, polls); ++polls) {
++        uint32_t irq = rd(u, 0x610), used = rd(u, 0x800) & 0xfffffff;
++        if ((irq & ERRORS) || used > u->tx_depth) { status = CR_BUS_IO; break; }
++        if (irq & DONE) {
++            if (sent != length || (rd(u, 0x40) & CMD_ACTIVE)) { status = CR_BUS_IO; break; }
++            wr(u, 0x618, DONE);
++            return 0;
++        }
++        while (used++ < u->tx_depth && sent < length) {
++            uint32_t word = 0;
++            for (unsigned i = 0; i < 4 && sent < length; ++i)
++                word |= (uint32_t)bytes[sent++] << (8 * i);
++            wr(u, 0x700, word);
++        }
++        u->io.delay_us(u->io.context, 1);
++    }
++    (void)stop(u, false);
++    return status;
++}
++static int drain_rx(struct CrDebugUartPoll *u)
++{
++    u->rx_bytes = 0;
++    uint32_t words = rd(u, 0x804) & 0x1ffffff;
++    if (words <= u->rx_depth) {
++        while (words--) (void)rd(u, 0x780);
++        if (!(rd(u, 0x804) & 0x1ffffff)) return 0;
++    }
++    u->poisoned = true;
++    return CR_BUS_IO;
++}
++static int recover_rx(struct CrDebugUartPoll *u)
++{
++    if ((rd(u, 0x40) & RX_ACTIVE) && stop(u, true)) return CR_BUS_TIMEOUT;
++    if (drain_rx(u)) return CR_BUS_IO;
++    wr(u, 0x648, UINT32_MAX);
++    wr(u, 0x630, 1U << 27);
++    return CR_BUS_IO; /* Discard the damaged sample; the next read can retry. */
++}
++int CrDebugUartPollRead(struct CrDebugUartPoll *u, uint8_t *byte)
++{
++    if (!u || !u->initialized || !byte || u->poisoned) return CR_BUS_INVALID;
++    if ((rd(u, 0x640) & RX_ERRORS) || !(rd(u, 0x40) & RX_ACTIVE))
++        return recover_rx(u);
++    if (!u->rx_bytes) {
++        uint32_t status = rd(u, 0x804), words = status & 0x1ffffff;
++        if (!words) return 0;
++        if (words > u->rx_depth) return recover_rx(u);
++        unsigned valid = (status >> 28) & 7;
++        if ((status & (1U << 31)) && words == 1 && valid > 4) return recover_rx(u);
++        u->rx_bytes = ((status & (1U << 31)) && words == 1 && valid) ? valid : 4;
++        u->rx_word = rd(u, 0x780);
++        if (words == 1) wr(u, 0x648, (1U << 26) | (1U << 27));
++    }
++    *byte = u->rx_word & 0xff;
++    u->rx_word >>= 8;
++    --u->rx_bytes;
++    return 1;
++}
++int CrDebugUartPollQuiesce(struct CrDebugUartPoll *u)
++{
++    if (!u) return CR_BUS_INVALID;
++    if (!u->claimed) return 0;
++    if ((rd(u, 0x40) & CMD_ACTIVE) && stop(u, false)) return CR_BUS_TIMEOUT;
++    if ((rd(u, 0x40) & RX_ACTIVE) && stop(u, true)) return CR_BUS_TIMEOUT;
++    if (drain_rx(u)) return CR_BUS_IO;
++    wr(u, 0x618, UINT32_MAX); wr(u, 0x648, UINT32_MAX);
++    for (unsigned i = sizeof(saved_offsets) / sizeof(saved_offsets[0]); i > 0; --i)
++        wr(u, saved_offsets[i - 1], u->saved[i - 1]);
++    if (u->inherited_rx) wr(u, 0x630, u->saved_rx_command);
++    u->initialized = u->poisoned = u->claimed = false;
++    return 0;
++}
+diff --git a/Library/DisplayLib/SplashLib.inf b/Library/DisplayLib/SplashLib.inf
+new file mode 100644
+index 0000000..d4ce06e
+--- /dev/null
++++ b/Library/DisplayLib/SplashLib.inf
+@@ -0,0 +1,14 @@
++[Defines]
++  INF_VERSION = 0x00010005
++  BASE_NAME = SplashLib
++  FILE_GUID = 63a86277-6dc3-4d6c-9a9e-120fc91fcb43
++  MODULE_TYPE = BASE
++  LIBRARY_CLASS = SplashLib
++[Sources]
++  splash.c
++[Packages]
++  MdePkg/MdePkg.dec
++  CranePkg/CranePkg.dec
++[LibraryClasses]
++  BaseMemoryLib
++  BaseLib
+diff --git a/Library/DisplayLib/splash.c b/Library/DisplayLib/splash.c
+new file mode 100644
+index 0000000..103ac0b
+--- /dev/null
++++ b/Library/DisplayLib/splash.c
+@@ -0,0 +1,537 @@
++/* SPDX-License-Identifier: MIT */
++#include <Library/cr_splash.h>
++#include <oskal/cr_string.h>
++struct scan { uint32_t src, xy, out, out_xy, addr, stride, format, unpack, op, secure, rect; };
++static uint32_t rd(const struct CrSplashResources *r, const struct CrIo *io, uint32_t offset)
++{ return io->read32(io->context, r->base + offset); }
++static bool within(uint64_t base, uint64_t size, uint64_t a, uint64_t s)
++{ return size && s && base <= UINT64_MAX - size && a >= base && s <= size && a - base <= size - s; }
++static void snapshot(const struct CrSplashResources *r, const struct CrIo *io, unsigned p, struct scan *s)
++{
++    uint32_t base = r->pipe[p];
++    *s = (struct scan){.src = rd(r, io, base), .xy = rd(r, io, base + 8),
++        .out = rd(r, io, base + 12), .out_xy = rd(r, io, base + 16),
++        .addr = rd(r, io, base + 20), .stride = rd(r, io, base + 36),
++        .format = rd(r, io, base + 48), .unpack = rd(r, io, base + 52),
++        .op = rd(r, io, base + 56), .secure = rd(r, io, base + 112),
++        .rect = rd(r, io, base + 0x170)};
++}
++struct routing { unsigned mask; int mixer[10]; uint32_t out[10], op[10]; };
++static int active_legacy(const struct CrSplashResources *r, const struct CrIo *io, struct routing *route)
++{
++    static const unsigned shift[] = {0, 3, 6, 26, 18, 21};
++    static const unsigned ext_shift[] = {0, 2, 4, 6, 16, 18};
++    cr_memset(route, 0, sizeof(*route));
++    for (unsigned p = 0; p < 10; ++p) route->mixer[p] = -1;
++    unsigned mixers = 0;
++    for (unsigned c = 0; c < r->ctl_count; ++c) {
++        unsigned base = r->ctl[c];
++        if (!rd(r, io, base + 0xf4) && !(rd(r, io, base + 0x14) & 15)) continue;
++        for (unsigned m = 0; m < r->mixer_count; ++m) {
++            uint32_t layer = rd(r, io, base + (m == 5 ? 0x24 : m * 4));
++            uint32_t ext = rd(r, io, base + 0x40 + m * 4);
++            uint32_t ext2 = rd(r, io, base + 0x70 + m * 4);
++            uint32_t ext3 = rd(r, io, base + 0xa0 + m * 4);
++            if ((layer & ((0x1ffU << 9) | (7U << 29) | (1U << 25))) ||
++                (ext & ~0x50055U) || (ext2 & ~0xffU) || ext3) return CR_BUS_UNSUPPORTED;
++            for (unsigned id = 0; id < 8; ++id) {
++                bool used = id < 6 ? ((layer >> shift[id]) & 7) || ((ext >> ext_shift[id]) & 1)
++                                  : ((ext2 >> ((id - 6) * 4)) & 15);
++                if (!used) continue;
++                unsigned p;
++                for (p = 0; p < r->pipe_count; ++p) if (r->pipe_id[p] == id) break;
++                /* Reject an unlisted active pipe, overlapping composition,
++                 * and a single pipe fanned out to multiple mixers. */
++                if (p == r->pipe_count || route->mixer[p] >= 0 || (mixers & (1U << m)))
++                    return CR_BUS_UNSUPPORTED;
++                route->mask |= 1U << p; mixers |= 1U << m;
++                route->mixer[p] = m;
++                route->out[p] = rd(r, io, r->mixer[m] + 4);
++                route->op[p] = rd(r, io, r->mixer[m]) & (1U << 31);
++            }
++        }
++    }
++    return 0;
++}
++static int format(const struct scan *s, enum CrSplashFormat *f, unsigned *bytes)
++{
++    /* Linear, tightly packed, interleaved RGB only; no rotate/YUV/DX/solid-fill. */
++    uint32_t v = s->format & ~(1U << 8);
++    if (v == 0x22216 && s->unpack == 0x00010002 && !(s->format & (1U << 8))) {
++        *f = CR_SPLASH_RGB565; *bytes = 2; return 0;
++    }
++    if (v != 0x236ff) return -1;
++    *bytes = 4;
++    if (s->unpack == 0x03020001) *f = (s->format & 256) ? CR_SPLASH_ARGB8888 : CR_SPLASH_XRGB8888;
++    else if (s->unpack == 0x03010002) *f = (s->format & 256) ? CR_SPLASH_ABGR8888 : CR_SPLASH_XBGR8888;
++    else return -1;
++    return 0;
++}
++/* ---- DPU12/DPU13 shared LM routing discovery (routing only, no framebuffer decode) ---- */
++
++#define REC_PIPE_MASK  0x000f003fu  /* DMA bits 0..5, VIG bits 16..19 */
++#define REC_BG_OFF     0x14u
++#define REC_OUT_OFF    0x04u
++#define REC_OP_OFF     0x00u
++
++struct rec_lm {
++    uint32_t resource;
++    uint32_t mask;
++    uint32_t stage;
++    uint32_t out;
++    uint32_t op;
++};
++
++struct rec_route {
++    uint32_t ctl_intf;
++    uint32_t pipe_active;
++    uint32_t lm_active;
++    uint32_t mask;
++    uint32_t count;
++    struct rec_lm lm[2];
++};
++
++/* Decode one 8-bit selector byte into its hardware logical pipe ID
++   (0..3 VIG, 4..9 DMA) and the CTL pipe hardware bit. Returns 1 on
++   malformed or unsupported byte. */
++static int rec_byte_map(uint32_t byte, uint32_t *resource, uint32_t *hwbit)
++{
++    uint32_t type = (byte >> 6) & 3u;
++    uint32_t id   = byte & 0x0fu;
++
++    if ((byte & 0x30u) != 0u)          /* bits 4..5 must be RECT0 */
++        return 1;
++    if (type == 0u) {                  /* DMA0..5 => hw pipe 4..9 */
++        if (id > 5u)
++            return 1;
++        *resource = id + 4u;
++        *hwbit    = id;
++        return 0;
++    }
++    if (type == 1u) {                  /* VIG0..3 => hw pipe 0..3 */
++        if (id > 3u)
++            return 1;
++        *resource = id;
++        *hwbit    = 16u + id;
++        return 0;
++    }
++    return 1;
++}
++
++static int active_rec(const struct CrSplashResources *r, const struct CrIo *io,
++                      struct rec_route *route)
++{
++    uint32_t pipe_active, lm_active, supplied = 0u, nlm, i, rec = 0u, intf;
++    uint32_t uhw = 0u, umask = 0u, ucnt = 0u;
++
++    cr_memset(route, 0, sizeof(*route));
++
++    /* Safe primary only: read just the CTL0 control interface dword. */
++    intf = rd(r, io, r->ctl[0] + 0xf4u);
++    if (intf == 0u)
++        return CR_BUS_UNSUPPORTED;
++
++    pipe_active = rd(r, io, r->ctl[0] + 0x12cu);   /* PIPE_ACTIVE */
++    lm_active   = rd(r, io, r->ctl[0] + 0x130u);   /* LM_ACTIVE   */
++
++    /* LM_ACTIVE valid bits are the supplied mixer IDs. */
++    for (i = 0u; i < r->mixer_count; i++)
++        supplied |= 1u << r->mixer_id[i];
++
++    if ((pipe_active & ~REC_PIPE_MASK) != 0u)
++        return CR_BUS_UNSUPPORTED;
++    if ((lm_active & ~supplied) != 0u)
++        return CR_BUS_UNSUPPORTED;
++    if (pipe_active == 0u || lm_active == 0u)
++        return CR_BUS_UNSUPPORTED;
++
++    route->ctl_intf    = intf;
++    route->pipe_active = pipe_active;
++    route->lm_active   = lm_active;
++
++    for (nlm = 0u; nlm < r->mixer_count; nlm++) {
++        uint32_t lm = r->mixer_id[nlm];
++        uint32_t s, chosen_stage = 0u, chosen_mask = 0u, occupied = 0u;
++
++        if ((lm_active & (1u << lm)) == 0u)
++            continue;
++        if (rec >= 2u)                 /* at most two active LMs */
++            return CR_BUS_UNSUPPORTED;
++
++        for (s = 0u; s <= r->stage_count; s++) {
++            uint32_t sel = (s == 0u) ? rd(r, io, r->mixer[nlm] + REC_BG_OFF)
++                                     : rd(r, io, r->mixer[nlm] + r->stage[s - 1u] + 4u);
++            uint32_t b, cnt = 0u, smask = 0u;
++
++            if ((sel >> 16) != 0u)     /* selector is 16-bit */
++                return CR_BUS_UNSUPPORTED;
++
++            for (b = 0u; b < 2u; b++) {
++                uint32_t byte = (sel >> (b * 8u)) & 0xffu;
++                uint32_t res, hwbit, p;
++
++                if (byte == 0xc0u)     /* 0xc0 byte means empty */
++                    continue;
++                if (rec_byte_map(byte, &res, &hwbit) != 0)
++                    return CR_BUS_UNSUPPORTED;
++                if ((pipe_active & (1u << hwbit)) == 0u)
++                    return CR_BUS_UNSUPPORTED;
++                for (p = 0u; p < r->pipe_count; p++)
++                    if (r->pipe_id[p] == res)
++                        break;
++                if (p >= r->pipe_count)
++                    return CR_BUS_UNSUPPORTED;
++                if ((smask & (1u << p)) != 0u)   /* duplicate within LM */
++                    return CR_BUS_UNSUPPORTED;
++
++                smask |= (1u << p);
++                uhw   |= (1u << hwbit);
++                cnt++;
++            }
++
++            if (cnt == 0u)
++                continue;
++            if (occupied != 0u)        /* all sources in one occupied slot */
++                return CR_BUS_UNSUPPORTED;
++
++            occupied     = 1u;
++            chosen_stage = s;          /* BG slot 0, FG slot 1+s */
++            chosen_mask  = smask;
++        }
++
++        if (occupied == 0u)            /* no active LM may be empty */
++            return CR_BUS_UNSUPPORTED;
++
++        route->lm[rec].resource = nlm;
++        route->lm[rec].mask     = chosen_mask;
++        route->lm[rec].stage    = chosen_stage;
++        route->lm[rec].out      = rd(r, io, r->mixer[nlm] + REC_OUT_OFF);
++        route->lm[rec].op       = rd(r, io, r->mixer[nlm] + REC_OP_OFF) & 0x80000000u;
++
++        umask |= chosen_mask;
++        rec++;
++    }
++
++    if (rec == 0u || rec > 2u)
++        return CR_BUS_UNSUPPORTED;
++
++    /* Union of pipe hardware bits must exactly cover PIPE_ACTIVE. */
++    if (uhw != pipe_active)
++        return CR_BUS_UNSUPPORTED;
++
++    /* Union of resource masks must be at most two bits. */
++    {
++        uint32_t t = umask;
++        while (t != 0u) {
++            ucnt += t & 1u;
++            t >>= 1u;
++        }
++    }
++    if (ucnt > 2u)
++        return CR_BUS_UNSUPPORTED;
++
++    route->mask  = umask;
++    route->count = rec;
++    return 0;
++}
++struct rec_scan { struct scan s; uint32_t img, current, odx[4]; };
++
++static void snapshot_rec(const struct CrSplashResources *r, const struct CrIo *io, unsigned p, struct rec_scan *t)
++{
++    cr_memset(t, 0, sizeof(*t));
++    if (!r->sspp_rec_separated) {
++        snapshot(r, io, p, &t->s);
++        return;
++    }
++    t->s.rect = rd(r, io, r->pipe[p] + 0x10);
++    uint32_t base = r->pipe[p] + 0x1000;
++    t->s.format = rd(r, io, base + 0x00);
++    t->s.unpack = rd(r, io, base + 0x04);
++    t->s.op = rd(r, io, base + 0x08);
++    t->img = rd(r, io, base + 0x10);
++    t->s.src = rd(r, io, base + 0x14);
++    t->s.xy = rd(r, io, base + 0x18);
++    t->s.out = rd(r, io, base + 0x1c);
++    t->s.out_xy = rd(r, io, base + 0x20);
++    t->odx[0] = rd(r, io, base + 0x30);
++    t->odx[1] = rd(r, io, base + 0x34);
++    t->odx[2] = rd(r, io, base + 0x38);
++    t->odx[3] = rd(r, io, base + 0x3c);
++    t->s.addr = rd(r, io, base + 0x4c);
++    t->s.stride = rd(r, io, base + 0x5c);
++    t->current = rd(r, io, base + 0x64);
++    t->s.secure = rd(r, io, base + 0x74);
++}
++static int read_rec(const struct CrSplashResources *r, const struct CrIo *io,
++                    struct CrSplash *fb)
++{
++    struct rec_route route, again;
++    struct rec_scan scans[2], reed[2];
++    const struct scan *part[2];
++    unsigned bpp[2], npipe = 0, i, j, count, left = 0, right = 1;
++    unsigned lm_left = 0;
++    enum CrSplashFormat formats[2];
++    uint32_t xo[2], pipes[2], lmw[2], lmh[2], cw, ch;
++    struct CrSplash out;
++    bool shared = false;
++    int ret;
++
++    cr_memset(&route, 0, sizeof(route));
++    cr_memset(&again, 0, sizeof(again));
++    cr_memset(scans, 0, sizeof(scans));
++    cr_memset(reed, 0, sizeof(reed));
++    cr_memset(&out, 0, sizeof(out));
++
++    ret = active_rec(r, io, &route);
++    if (ret)
++        return ret;
++
++    count = route.count;
++    if (count != 1 && count != 2)
++        return CR_BUS_UNSUPPORTED;
++    for (j = 0; j < 32; j++) {
++        if (route.mask & (1u << j)) {
++            if (npipe == 2)
++                return CR_BUS_UNSUPPORTED;
++            pipes[npipe++] = j;
++        }
++    }
++    if (npipe != count)
++        return CR_BUS_UNSUPPORTED;
++
++    for (i = 0; i < count; i++) {
++        lmw[i] = route.lm[i].out & 0xffff;
++        lmh[i] = route.lm[i].out >> 16;
++        if (lmw[i] == 0 || lmw[i] > 8192 || lmh[i] == 0 || lmh[i] > 8192)
++            return CR_BUS_INVALID;
++    }
++    if (count == 1) {
++        if (route.lm[0].op != 0)
++            return CR_BUS_UNSUPPORTED;
++    } else {
++        uint32_t m0 = route.lm[0].mask, m1 = route.lm[1].mask;
++        bool p0 = m0 && (m0 & (m0 - 1)) == 0;
++        bool p1 = m1 && (m1 & (m1 - 1)) == 0;
++
++        if (route.lm[0].op == route.lm[1].op || lmh[0] != lmh[1])
++            return CR_BUS_UNSUPPORTED;
++        lm_left = route.lm[0].op ? 1 : 0;
++        if (p0 && p1) {
++            if (m0 & m1)
++                return CR_BUS_UNSUPPORTED;
++        } else if (m0 && m0 == m1) {
++            if (route.lm[0].stage != route.lm[1].stage)
++                return CR_BUS_UNSUPPORTED;
++            shared = true;
++        } else {
++            return CR_BUS_UNSUPPORTED;
++        }
++    }
++
++    ch = lmh[0];
++    cw = (count == 1) ? lmw[0] : lmw[0] + lmw[1];
++    if (cw > 8192)
++        return CR_BUS_INVALID;
++
++    for (i = 0; i < npipe; i++) {
++        struct rec_scan *s = &scans[i];
++        uint32_t w, h, sx, stride;
++        uint64_t saddr, plen;
++        unsigned b = 0;
++
++        snapshot_rec(r, io, pipes[i], s);
++        if (s->s.rect || s->s.secure ||
++            (r->sspp_rec_separated &&
++             (s->odx[0] || s->odx[1] || s->odx[2] || s->odx[3])) ||
++            (s->s.op & ~((1u << 31) | (1u << 4))))
++            return CR_BUS_UNSUPPORTED;
++        if (s->s.src != s->s.out || (s->s.xy >> 16) || (s->s.out_xy >> 16) ||
++            (r->sspp_rec_separated &&
++             (s->current != s->s.addr || (s->s.stride >> 16))))
++            return CR_BUS_UNSUPPORTED;
++        if (format(&s->s, &formats[i], &b))
++            return CR_BUS_UNSUPPORTED;
++
++        w = s->s.src & 0xffff;
++        h = s->s.src >> 16;
++        sx = s->s.xy & 0xffff;
++        stride = s->s.stride & 0xffff;
++        if (w == 0 || w > 8192 || h == 0 || h > 8192)
++            return CR_BUS_INVALID;
++        if (h != ch)
++            return CR_BUS_UNSUPPORTED;
++        if ((uint64_t)stride < ((uint64_t)sx + w) * b)
++            return CR_BUS_INVALID;
++        saddr = (uint64_t)s->s.addr + (uint64_t)sx * b;
++        if (saddr > (uint64_t)UINTPTR_MAX || (b && saddr % b))
++            return CR_BUS_INVALID;
++        plen = (uint64_t)stride * (h - 1) + (uint64_t)w * b;
++        if (!within(r->reserved_base, r->reserved_size, saddr, plen))
++            return CR_BUS_INVALID;
++
++        part[i] = &s->s;
++        bpp[i] = b;
++        if (shared) {
++            xo[i] = s->s.out_xy & 0xffff;
++        } else {
++            for (j = 0; j < count; j++) {
++                if (route.lm[j].mask & (1u << pipes[i]))
++                    break;
++            }
++            if (j == count)
++                return CR_BUS_UNSUPPORTED;
++            if (s->s.out_xy != 0 || s->s.out != route.lm[j].out)
++                return CR_BUS_UNSUPPORTED;
++            xo[i] = (j == lm_left) ? 0 : lmw[lm_left];
++        }
++    }
++
++    if (npipe == 2 && xo[0] > xo[1]) {
++        left = 1;
++        right = 0;
++    }
++    if (xo[left] != 0 || part[left]->xy != 0)
++        return CR_BUS_UNSUPPORTED;
++
++    {
++        const struct scan *L = part[left];
++        uint32_t lw = L->src & 0xffff;
++        uint64_t laddr = (uint64_t)L->addr +
++                         (uint64_t)(L->xy & 0xffff) * bpp[left];
++
++        if (npipe == 2) {
++            const struct scan *R = part[right];
++            if (xo[right] != lw || formats[right] != formats[left] ||
++                bpp[right] != bpp[left] ||
++                (R->stride & 0xffff) != (L->stride & 0xffff) ||
++                (R->src >> 16) != (L->src >> 16))
++                return CR_BUS_UNSUPPORTED;
++            if ((uint64_t)R->addr + (uint64_t)(R->xy & 0xffff) * bpp[right] !=
++                laddr + (uint64_t)lw * bpp[left])
++                return CR_BUS_UNSUPPORTED;
++            if ((uint64_t)lw + (R->src & 0xffff) != cw)
++                return CR_BUS_UNSUPPORTED;
++        } else if (lw != cw) {
++            return CR_BUS_UNSUPPORTED;
++        }
++
++        {
++            uint32_t fs = L->stride & 0xffff, fh = L->src >> 16;
++            uint64_t fsz = (uint64_t)fs * fh;
++
++            if ((uint64_t)fs < (uint64_t)cw * bpp[left] ||
++                fsz > (uint64_t)SIZE_MAX || laddr > (uint64_t)UINTPTR_MAX ||
++                (fsz && laddr + fsz - 1 > (uint64_t)UINTPTR_MAX))
++                return CR_BUS_INVALID;
++            if (!within(r->reserved_base, r->reserved_size, laddr, fsz))
++                return CR_BUS_INVALID;
++
++            out.address = (uintptr_t)laddr;
++            out.size = (size_t)fsz;
++            out.width = cw;
++            out.height = fh;
++            out.stride = fs;
++            out.format = formats[left];
++        }
++    }
++
++    for (i = 0; i < npipe; i++) {
++        cr_memset(&reed[i], 0, sizeof(reed[i]));
++        snapshot_rec(r, io, pipes[i], &reed[i]);
++        if (cr_memcmp(&reed[i], &scans[i], sizeof(scans[i])))
++            return CR_BUS_AGAIN;
++    }
++    ret = active_rec(r, io, &again);
++    if (ret)
++        return CR_BUS_AGAIN;
++    if (cr_memcmp(&again, &route, sizeof(route)))
++        return CR_BUS_AGAIN;
++
++    *fb = out;
++    return 0;
++}
++int CrSplashRead(const struct CrSplashResources *r, const struct CrIo *io, struct CrSplash *fb)
++{
++    if (!r || !io || !io->read32 || !fb || !r->base || r->base > UINTPTR_MAX - r->size ||
++        !r->pipe_count || !r->ctl_count || !r->mixer_count || !r->reserved_size) return CR_BUS_INVALID;
++    if (r->sspp_rec_separated && !r->lm_source_select) return CR_BUS_INVALID;
++    bool canoe = r->lm_source_select;
++    if (r->pipe_count > (canoe ? 10 : 8) || r->ctl_count > 8 || r->mixer_count > (canoe ? 8 : 6))
++        return CR_BUS_INVALID;
++    unsigned ids = 0;
++    for (unsigned p = 0; p < r->pipe_count; ++p) {
++        if (r->pipe_id[p] > (canoe ? 9 : 7) || (ids & (1U << r->pipe_id[p])) ||
++            (r->pipe[p] & 3) || !within(0, r->size, r->pipe[p], r->sspp_rec_separated ? 0x1078 : 0x174) ||
++            (r->sspp_rec_separated && (uint64_t)r->pipe[p] + 0x1077 > UINT32_MAX)) return CR_BUS_INVALID;
++        ids |= 1U << r->pipe_id[p];
++    }
++    unsigned ctl_span = canoe ? 0x134 : 0xf8;
++    for (unsigned c = 0; c < r->ctl_count; ++c) {
++        if ((r->ctl[c] & 3) || !within(0, r->size, r->ctl[c], ctl_span)) return CR_BUS_INVALID;
++        if (r->sspp_rec_separated && (uint64_t)r->ctl[c] + 0x133 > UINT32_MAX) return CR_BUS_INVALID;
++    }
++    for (unsigned m = 0; m < r->mixer_count; ++m) {
++        if ((r->mixer[m] & 3) || !within(0, r->size, r->mixer[m], canoe ? 0x18 : 8)) return CR_BUS_INVALID;
++        if (r->sspp_rec_separated && (uint64_t)r->mixer[m] + 0x17 > UINT32_MAX) return CR_BUS_INVALID;
++    }
++    if (canoe) {
++        if (!r->stage_count || r->stage_count > 11) return CR_BUS_INVALID;
++        unsigned mids = 0;
++        for (unsigned m = 0; m < r->mixer_count; ++m) {
++            if (r->mixer_id[m] > 7 || (mids & (1U << r->mixer_id[m]))) return CR_BUS_INVALID;
++            mids |= 1U << r->mixer_id[m];
++        }
++        for (unsigned i = 0; i < r->stage_count; ++i) {
++            if ((r->stage[i] & 3) || r->stage[i] < 0x40) return CR_BUS_INVALID;
++            for (unsigned j = i + 1; j < r->stage_count; ++j)
++                if (r->stage[i] == r->stage[j]) return CR_BUS_INVALID;
++            for (unsigned m = 0; m < r->mixer_count; ++m) {
++                if (!within(0, r->size, (uint64_t)r->mixer[m] + r->stage[i], 8)) return CR_BUS_INVALID;
++                if (r->sspp_rec_separated && (uint64_t)r->mixer[m] + r->stage[i] + 7 > UINT32_MAX) return CR_BUS_INVALID;
++            }
++        }
++    }
++    if (r->lm_source_select) return read_rec(r, io, fb);
++    struct routing route, again;
++    if (active_legacy(r, io, &route) || !route.mask) return CR_BUS_UNSUPPORTED;
++    struct scan scans[2]; unsigned count = 0, pipe[2], bytes = 0;
++    struct CrSplash part[2];
++    for (unsigned p = 0; p < r->pipe_count; ++p) {
++        if (!(route.mask & (1U << p))) continue;
++        if (count == 2) return CR_BUS_UNSUPPORTED;
++        struct scan *s = &scans[count]; snapshot(r, io, p, s);
++        unsigned bpp;
++        if (format(s, &part[count].format, &bpp) || s->src != s->out ||
++            (s->xy >> 16) || s->out_xy || s->out != route.out[p] || s->secure || s->rect ||
++            (s->op & ~((1U << 31) | (1U << 4)))) return CR_BUS_UNSUPPORTED;
++        bytes = bpp; pipe[count] = p;
++        part[count].width = s->src & 0xffff; part[count].height = s->src >> 16;
++        part[count].stride = s->stride & 0xffff;
++        part[count].address = (uint64_t)s->addr + (s->xy & 0xffff) * bpp;
++        if (!part[count].width || !part[count].height || part[count].width > 8192 || part[count].height > 8192 ||
++            part[count].stride < ((s->xy & 0xffff) + part[count].width) * bpp || (part[count].address % bpp)) return CR_BUS_INVALID;
++        part[count].size = (uint64_t)part[count].stride * (part[count].height - 1) + part[count].width * bpp;
++        if (!within(r->reserved_base, r->reserved_size, part[count].address, part[count].size)) return CR_BUS_INVALID;
++        ++count;
++    }
++    if (count == 1 && (route.op[pipe[0]] || scans[0].xy)) return CR_BUS_UNSUPPORTED;
++    if (count == 2) {
++        if (route.op[pipe[0]] == route.op[pipe[1]]) return CR_BUS_UNSUPPORTED;
++        unsigned left = route.op[pipe[0]] ? 1 : 0;
++        if (scans[left].xy) return CR_BUS_UNSUPPORTED;
++        if (left) { struct CrSplash t = part[0]; part[0] = part[1]; part[1] = t; }
++        if (part[0].address + part[0].width * bytes != part[1].address || part[0].height != part[1].height ||
++            part[0].stride != part[1].stride || part[0].format != part[1].format) return CR_BUS_UNSUPPORTED;
++        part[0].width += part[1].width;
++    }
++    if (!count || part[0].width * bytes > part[0].stride) return CR_BUS_UNSUPPORTED;
++    part[0].size = (uint64_t)part[0].stride * part[0].height;
++    if (!within(r->reserved_base, r->reserved_size, part[0].address, part[0].size)) return CR_BUS_INVALID;
++    for (unsigned i = 0; i < count; ++i) {
++        struct scan next; snapshot(r, io, pipe[i], &next);
++        if (cr_memcmp(&next, &scans[i], sizeof(next))) return CR_BUS_AGAIN;
++    }
++    if (active_legacy(r, io, &again) || cr_memcmp(&again, &route, sizeof(route))) return CR_BUS_AGAIN;
++    *fb = part[0];
++    return 0;
++}
+diff --git a/Library/GeniSeLib/GeniSeLib.inf b/Library/GeniSeLib/GeniSeLib.inf
+new file mode 100644
+index 0000000..f2ff2a3
+--- /dev/null
++++ b/Library/GeniSeLib/GeniSeLib.inf
+@@ -0,0 +1,16 @@
++[Defines]
++  INF_VERSION = 0x00010005
++  BASE_NAME = GeniSeLib
++  FILE_GUID = 8b3062de-9978-4504-8c16-53c49c6518aa
++  MODULE_TYPE = BASE
++  LIBRARY_CLASS = GeniSeLib
++[Sources]
++  geni_fifo.c
++  geni_uefi.c
++[Packages]
++  MdePkg/MdePkg.dec
++  CranePkg/CranePkg.dec
++[LibraryClasses]
++  BaseLib
++  IoLib
++  TimerLib
+diff --git a/Library/GeniSeLib/QupResourceLib.inf b/Library/GeniSeLib/QupResourceLib.inf
+new file mode 100644
+index 0000000..a6aa9a0
+--- /dev/null
++++ b/Library/GeniSeLib/QupResourceLib.inf
+@@ -0,0 +1,17 @@
++[Defines]
++  INF_VERSION = 0x00010005
++  BASE_NAME = QupResourceLib
++  FILE_GUID = 15fa54a6-7f5f-4e44-bf8f-8f3029a16c01
++  MODULE_TYPE = BASE
++  LIBRARY_CLASS = QupResourceLib
++[Sources]
++  geni_resources.c
++[Packages]
++  MdePkg/MdePkg.dec
++  CranePkg/CranePkg.dec
++[LibraryClasses]
++  GeniSeLib
++  GpioLib
++  ClockLib
++  RpmhLib
++  CmdDBLib
+diff --git a/Library/GeniSeLib/geni_fifo.c b/Library/GeniSeLib/geni_fifo.c
+new file mode 100644
+index 0000000..6d0f4cf
+--- /dev/null
++++ b/Library/GeniSeLib/geni_fifo.c
+@@ -0,0 +1,437 @@
++/* Copyright (c) 2025-2026 Project Aloha Authors and Kancy Joe.
++ * SPDX-License-Identifier: MIT
++ * Shared resource-context FIFO core; see the integration provenance manifest.
++ */
++#include <Library/cr_geni.h>
++#include <Library/cr_geni_regs.h>
++
++#define DEFAULT_TIMEOUT_US 20000U
++#define RECOVERY_TIMEOUT_US 1000U
++#define MAX_TRANSFER_BYTES 0x00ffffffU
++#define COMMON_ERRORS (GENI_SE_M_IRQ_CMD_OVERRUN | GENI_SE_M_IRQ_ILLEGAL_CMD | \
++    GENI_SE_M_IRQ_CMD_FAILURE | GENI_SE_M_IRQ_RX_FIFO_RD_ERR | \
++    GENI_SE_M_IRQ_RX_FIFO_WR_ERR | GENI_SE_M_IRQ_TX_FIFO_RD_ERR | \
++    GENI_SE_M_IRQ_TX_FIFO_WR_ERR)
++
++static const uint16_t common_saved[] = {
++    GENI_SE_CGC_CTRL, GENI_SE_OUTPUT_CTRL, GENI_SE_SER_M_CLK_CFG,
++    GENI_SE_SER_S_CLK_CFG, GENI_SE_CLK_SEL, GENI_SE_BYTE_GRAN,
++    GENI_SE_DMA_MODE_EN, GENI_SE_TX_PACKING_CFG0, GENI_SE_TX_PACKING_CFG1,
++    GENI_SE_RX_PACKING_CFG0, GENI_SE_RX_PACKING_CFG1,
++    GENI_SE_TX_WATERMARK_REG, GENI_SE_RX_WATERMARK_REG,
++    GENI_SE_RX_RFR_WATERMARK_REG, GENI_SE_GSI_EVENT_EN,
++    GENI_SE_M_IRQ_EN, GENI_SE_S_IRQ_EN, GENI_SE_DMA_GENERAL_CFG,
++    GENI_SE_IRQ_EN
++};
++static const uint16_t spi_saved[] = {
++    SPI_GENI_SE_CPHA, SPI_GENI_SE_CPOL, SPI_GENI_SE_DEMUX_OUTPUT_INV,
++    SPI_GENI_SE_DEMUX_SEL, SPI_GENI_SE_TRANS_CFG, SPI_GENI_SE_WORD_LEN,
++    SPI_GENI_SE_LOOPBACK
++};
++#define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
++_Static_assert(ARRAY_COUNT(common_saved) + ARRAY_COUNT(spi_saved) ==
++               CR_GENI_SAVED_REGS, "saved GENI register count");
++
++static uint32_t rd(struct CrGeni *bus, uint32_t reg)
++{
++    return bus->io.read32(bus->io.context, bus->config.base + reg);
++}
++static void wr(struct CrGeni *bus, uint32_t reg, uint32_t value)
++{
++    bus->io.write32(bus->io.context, bus->config.base + reg, value);
++}
++static bool expired(struct CrGeni *bus, uint64_t start, uint32_t limit)
++{
++    return bus->io.now_us(bus->io.context) - start >= limit;
++}
++static int irq_error(struct CrGeni *bus, uint32_t irq, uint32_t opcode)
++{
++    if (bus->config.protocol == CR_GENI_I2C) {
++        /* Extracted from I2CCrDxe: the final data NACK of a read is normal.
++         * Address NACK and independent GP errors must still fail. */
++        if (opcode == I2C_GENI_M_CMD_OPCODE_READ && (irq & I2C_GENI_M_IRQ_NACK) && rd(bus, 0x910))
++            irq &= ~(I2C_GENI_M_IRQ_NACK | GENI_SE_M_IRQ_CMD_FAILURE);
++        if (irq & (1U << 9)) return CR_BUS_IO;
++        if (irq & I2C_GENI_M_IRQ_NACK)
++            return CR_BUS_NACK;
++        if (irq & I2C_GENI_M_IRQ_ARB_LOST)
++            return CR_BUS_AGAIN;
++        if (irq & I2C_GENI_M_IRQ_BUS_PROTO)
++            return CR_BUS_IO;
++    }
++    if (irq & (COMMON_ERRORS | GENI_SE_M_IRQ_CMD_CANCEL | GENI_SE_M_IRQ_CMD_ABORT))
++        return CR_BUS_IO;
++    return 0;
++}
++
++static int wait_control(struct CrGeni *bus, uint32_t control,
++                        uint32_t done)
++{
++    uint64_t start = bus->io.now_us(bus->io.context);
++    wr(bus, GENI_SE_M_IRQ_CLEAR, done);
++    wr(bus, GENI_SE_M_CMD_CTRL_REG, control);
++    for (uint32_t polls = 0; polls <= RECOVERY_TIMEOUT_US; ++polls) {
++        uint32_t irq = rd(bus, GENI_SE_M_IRQ_STATUS);
++        if (irq & done) {
++            wr(bus, GENI_SE_M_IRQ_CLEAR, irq);
++            if (!(rd(bus, GENI_SE_STATUS) & GENI_SE_STATUS_M_GENI_CMD_ACTIVE))
++                return 0;
++        }
++        if (expired(bus, start, RECOVERY_TIMEOUT_US))
++            break;
++        bus->io.delay_us(bus->io.context, 1);
++    }
++    return CR_BUS_TIMEOUT;
++}
++
++static int cancel_active(struct CrGeni *bus)
++{
++    int status;
++    wr(bus, GENI_SE_TX_WATERMARK_REG, 0);
++    if (!(rd(bus, GENI_SE_STATUS) & GENI_SE_STATUS_M_GENI_CMD_ACTIVE))
++        return 0;
++    status = wait_control(bus, GENI_SE_CMD_CTRL_GENI_CMD_CANCEL,
++                          GENI_SE_M_IRQ_CMD_CANCEL);
++    if (status)
++        status = wait_control(bus, GENI_SE_CMD_CTRL_GENI_CMD_ABORT,
++                              GENI_SE_M_IRQ_CMD_ABORT);
++    if (status)
++        bus->poisoned = true;
++    return status;
++}
++
++/* Payload is always 8-bit, packed four bytes per 32-bit FIFO word. */
++static int command(struct CrGeni *bus, uint32_t opcode, uint32_t params,
++                   const uint8_t *tx, uint8_t *rx, size_t length,
++                   uint64_t start, uint32_t timeout)
++{
++    size_t sent = 0, received = 0;
++    if (expired(bus, start, timeout))
++        return CR_BUS_TIMEOUT;
++    if (rd(bus, GENI_SE_STATUS) & GENI_SE_STATUS_M_GENI_CMD_ACTIVE)
++        return CR_BUS_BUSY;
++    if (tx)
++        wr(bus, I2C_GENI_SE_TX_TRANS_LEN, (uint32_t)length);
++    if (rx)
++        wr(bus, I2C_GENI_SE_RX_TRANS_LEN, (uint32_t)length);
++    wr(bus, GENI_SE_M_IRQ_CLEAR, UINT32_MAX);
++    wr(bus, GENI_SE_M_CMD0, (opcode << 27) | params);
++    wr(bus, GENI_SE_TX_WATERMARK_REG, tx ? 1U : 0U);
++    /* Poll-count guard also bounds broken/mocked timers. */
++    for (uint32_t polls = 0; polls <= timeout; ++polls) {
++        uint32_t irq = rd(bus, GENI_SE_M_IRQ_STATUS);
++        int status = irq_error(bus, irq, opcode);
++        if (status)
++            return status;
++        if (tx && sent < length && (irq & GENI_SE_M_IRQ_TX_FIFO_WATERMARK)) {
++            uint32_t used = rd(bus, GENI_SE_TX_FIFO_STATUS) & GENI_SE_TX_FIFO_WC_MSK;
++            if (used > bus->tx_depth)
++                return CR_BUS_IO;
++            for (uint32_t w = used; w < bus->tx_depth && sent < length; ++w) {
++                uint32_t word = 0;
++                for (unsigned b = 0; b < 4 && sent < length; ++b)
++                    word |= (uint32_t)tx[sent++] << (b * 8U);
++                wr(bus, GENI_SE_TX_FIFOn, word);
++            }
++            if (sent == length)
++                wr(bus, GENI_SE_TX_WATERMARK_REG, 0);
++        }
++        if (rx && (irq & (GENI_SE_M_IRQ_RX_FIFO_WATERMARK | GENI_SE_M_IRQ_RX_FIFO_LAST))) {
++            uint32_t fifo = rd(bus, GENI_SE_RX_FIFO_STATUS);
++            uint32_t words = fifo & GENI_SE_RX_FIFO_WC_MSK;
++            unsigned last_bytes = (fifo >> 28) & 7U;
++            if (words > bus->rx_depth || last_bytes > 4U)
++                return CR_BUS_IO;
++            for (uint32_t w = 0; w < words; ++w) {
++                uint32_t word = rd(bus, GENI_SE_RX_FIFOn);
++                unsigned bytes = 4;
++                if (w + 1U == words && (fifo & GENI_SE_RX_FIFO_LAST_MSK) && last_bytes)
++                    bytes = last_bytes;
++                if (bytes > length - received)
++                    return CR_BUS_IO;
++                for (unsigned b = 0; b < bytes; ++b)
++                    rx[received++] = (uint8_t)(word >> (b * 8U));
++            }
++        }
++        wr(bus, GENI_SE_M_IRQ_CLEAR, irq);
++        if (irq & GENI_SE_M_IRQ_CMD_DONE) {
++            if ((tx && sent != length) || (rx && received != length))
++                return CR_BUS_IO;
++            return 0;
++        }
++        if (expired(bus, start, timeout))
++            return CR_BUS_TIMEOUT;
++        bus->io.delay_us(bus->io.context, 1);
++    }
++    return CR_BUS_TIMEOUT;
++}
++
++static int release_lines(struct CrGeni *bus)
++{
++    uint32_t opcode;
++    int status = cancel_active(bus);
++    if (status)
++        return status;
++    /* A cancelled/short transfer must not leak old FIFO bytes into the next
++     * report. Never reuse a controller whose bounded drain cannot finish. */
++    uint32_t words = rd(bus, GENI_SE_RX_FIFO_STATUS) & GENI_SE_RX_FIFO_WC_MSK;
++    if (words > bus->rx_depth) {
++        bus->poisoned = true;
++        return CR_BUS_IO;
++    }
++    for (uint32_t i = 0; i < words; ++i)
++        (void)rd(bus, GENI_SE_RX_FIFOn);
++    if ((rd(bus, GENI_SE_TX_FIFO_STATUS) & GENI_SE_TX_FIFO_WC_MSK) ||
++        (rd(bus, GENI_SE_RX_FIFO_STATUS) & GENI_SE_RX_FIFO_WC_MSK)) {
++        bus->poisoned = true;
++        return CR_BUS_IO;
++    }
++    if (!bus->cs_asserted && !bus->i2c_held)
++        return 0;
++    opcode = bus->config.protocol == CR_GENI_SPI ?
++             SPI_GENI_M_CMD_OPCODE_CS_DEASSERT : I2C_GENI_M_CMD_OPCODE_STOP_ON_BUS;
++    status = command(bus, opcode, 0, NULL, NULL, 0,
++                     bus->io.now_us(bus->io.context), RECOVERY_TIMEOUT_US);
++    if (status) {
++        /* A failed release cannot be treated as a reusable controller. */
++        (void)cancel_active(bus);
++        bus->poisoned = true;
++        return status;
++    }
++    bus->cs_asserted = false;
++    bus->i2c_held = false;
++    return 0;
++}
++
++static void configure_packing(struct CrGeni *bus)
++{
++    uint32_t vec[4];
++    for (unsigned i = 0; i < 4; ++i)
++        vec[i] = ((i * 8U + 7U) << 5) | (1U << 4) | (7U << 1);
++    vec[3] |= 1U;
++    wr(bus, GENI_SE_TX_PACKING_CFG0, vec[0] | (vec[1] << 10));
++    wr(bus, GENI_SE_TX_PACKING_CFG1, vec[2] | (vec[3] << 10));
++    wr(bus, GENI_SE_RX_PACKING_CFG0, vec[0] | (vec[1] << 10));
++    wr(bus, GENI_SE_RX_PACKING_CFG1, vec[2] | (vec[3] << 10));
++    wr(bus, GENI_SE_BYTE_GRAN, 0);
++}
++
++int CrGeniInit(struct CrGeni *bus,
++                       const struct CrGeniConfig *config,
++                       const struct CrIo *io)
++{
++    uint32_t divisor, counters = 0;
++    if (!io)
++        io = CrIoDefault();
++    if (!bus || !config || !CrIoValid(io) || !config->base ||
++        config->size < 0xe34U || config->base > UINTPTR_MAX - config->size || (config->base & 3U) ||
++        !config->speed_hz || !config->source_hz || config->clock_index > 7 ||
++        config->spi_mode > 3 || config->chip_select > 3)
++        return CR_BUS_INVALID;
++    if (bus->initialized)
++        return CR_BUS_BUSY;
++    if (config->protocol == CR_GENI_I2C) {
++        if (config->source_hz != 19200000U)
++            return CR_BUS_UNSUPPORTED;
++        switch (config->speed_hz) {
++        /* MiCode andromeda-p-oss clock timing table, same as CrDK. */
++        case 100000: divisor = 7; counters = (10U << 20) | (11U << 10) | 26U; break;
++        case 400000: divisor = 2; counters = (5U << 20) | (12U << 10) | 24U; break;
++        case 1000000: divisor = 1; counters = (3U << 20) | (9U << 10) | 18U; break;
++        default: return CR_BUS_UNSUPPORTED;
++        }
++    } else if (config->protocol == CR_GENI_SPI) {
++        divisor = (uint32_t)(((uint64_t)config->source_hz + config->speed_hz - 1U) /
++                              config->speed_hz);
++        if (!divisor || divisor > 4095U)
++            return CR_BUS_UNSUPPORTED;
++    } else {
++        return CR_BUS_UNSUPPORTED;
++    }
++    *bus = (struct CrGeni){ .io = *io, .config = *config };
++    if (((rd(bus, GENI_SE_FW_REVISION_RO) >> 8) & 0xffU) != (unsigned)config->protocol ||
++        (rd(bus, GENI_SE_IF_DISABLE_RO) & GENI_SE_FIFO_IF_DISABLE))
++        return CR_BUS_UNSUPPORTED;
++    if (rd(bus, GENI_SE_STATUS) &
++        (GENI_SE_STATUS_M_GENI_CMD_ACTIVE | GENI_SE_STATUS_S_GENI_CMD_ACTIVE))
++        return CR_BUS_BUSY;
++    uint32_t tx = rd(bus, GENI_SE_HW_PARAM_0), rx = rd(bus, GENI_SE_HW_PARAM_1);
++    bus->tx_depth = (uint8_t)((tx >> 16) & 0x3fU);
++    bus->rx_depth = (uint8_t)((rx >> 16) & 0x3fU);
++    if (bus->tx_depth < 4 || bus->rx_depth < 4 ||
++        ((tx >> 24) & 0x3fU) != 32 || ((rx >> 24) & 0x3fU) != 32)
++        return CR_BUS_UNSUPPORTED;
++    if ((rd(bus, GENI_SE_TX_FIFO_STATUS) & GENI_SE_TX_FIFO_WC_MSK) ||
++        (rd(bus, GENI_SE_RX_FIFO_STATUS) & GENI_SE_RX_FIFO_WC_MSK))
++        return CR_BUS_BUSY;
++    for (size_t i = 0; i < ARRAY_COUNT(common_saved); ++i)
++        bus->saved[i] = rd(bus, common_saved[i]);
++    if (config->protocol == CR_GENI_SPI) {
++        for (size_t i = 0; i < ARRAY_COUNT(spi_saved); ++i)
++            bus->saved[ARRAY_COUNT(common_saved) + i] = rd(bus, spi_saved[i]);
++    } else {
++        bus->saved[ARRAY_COUNT(common_saved)] = rd(bus, I2C_GENI_SE_SCL_COUNTERS);
++    }
++    /* Local status is polled. The GIC is never enabled or reconfigured. */
++    wr(bus, GENI_SE_GSI_EVENT_EN, 0);
++    wr(bus, GENI_SE_IRQ_EN, 0);
++    wr(bus, GENI_SE_M_IRQ_CLEAR, UINT32_MAX);
++    wr(bus, GENI_SE_S_IRQ_CLEAR, UINT32_MAX);
++    wr(bus, GENI_SE_M_IRQ_EN, COMMON_ERRORS | I2C_GENI_M_IRQ_ERROR_MSK |
++       GENI_SE_M_IRQ_CMD_DONE | GENI_SE_M_IRQ_CMD_CANCEL | GENI_SE_M_IRQ_CMD_ABORT |
++       GENI_SE_M_IRQ_TX_FIFO_WATERMARK | GENI_SE_M_IRQ_RX_FIFO_WATERMARK |
++       GENI_SE_M_IRQ_RX_FIFO_LAST);
++    wr(bus, GENI_SE_S_IRQ_EN, 0);
++    wr(bus, GENI_SE_CGC_CTRL, rd(bus, GENI_SE_CGC_CTRL) | GENI_SE_DEFAULT_CGC_EN);
++    wr(bus, GENI_SE_DMA_GENERAL_CFG, rd(bus, GENI_SE_DMA_GENERAL_CFG) | 0xfU);
++    wr(bus, GENI_SE_OUTPUT_CTRL, GENI_SE_DEFAULT_IO_OUTPUT_CTRL_MSK);
++    wr(bus, GENI_SE_FORCE_DEFAULT_REG, GENI_SE_FORCE_DEFAULT);
++    wr(bus, GENI_SE_DMA_MODE_EN, rd(bus, GENI_SE_DMA_MODE_EN) & ~1U);
++    wr(bus, GENI_SE_TX_WATERMARK_REG, 0);
++    wr(bus, GENI_SE_RX_WATERMARK_REG, bus->rx_depth - 2U);
++    wr(bus, GENI_SE_RX_RFR_WATERMARK_REG, bus->rx_depth - 1U);
++    configure_packing(bus);
++    wr(bus, GENI_SE_CLK_SEL, config->clock_index);
++    wr(bus, GENI_SE_SER_M_CLK_CFG, (divisor << 4) | GENI_SE_SER_CLK_EN);
++    wr(bus, GENI_SE_SER_S_CLK_CFG, (divisor << 4) | GENI_SE_SER_CLK_EN);
++    if (config->protocol == CR_GENI_I2C) {
++        wr(bus, I2C_GENI_SE_SCL_COUNTERS, counters);
++    } else {
++        wr(bus, SPI_GENI_SE_WORD_LEN, 8U - SPI_GENI_MIN_WORD_LEN);
++        wr(bus, SPI_GENI_SE_CPHA, config->spi_mode & 1U);
++        wr(bus, SPI_GENI_SE_CPOL, (config->spi_mode & 2U) ? SPI_GENI_CPOL_BIT : 0U);
++        wr(bus, SPI_GENI_SE_DEMUX_SEL, config->chip_select);
++        wr(bus, SPI_GENI_SE_DEMUX_OUTPUT_INV, 0);
++        wr(bus, SPI_GENI_SE_LOOPBACK, 0);
++        wr(bus, SPI_GENI_SE_TRANS_CFG,
++           rd(bus, SPI_GENI_SE_TRANS_CFG) & ~SPI_GENI_TRANS_CFG_CS_TOGGLE);
++    }
++    bus->initialized = true;
++    return 0;
++}
++
++static int validate_bus(struct CrGeni *bus, enum CrGeniProtocol protocol)
++{
++    if (!bus || !bus->initialized || bus->config.protocol != protocol)
++        return CR_BUS_INVALID;
++    if (bus->poisoned)
++        return CR_BUS_IO;
++    if (bus->busy)
++        return CR_BUS_BUSY;
++    return 0;
++}
++
++static int i2c_transfer(struct CrGeni *bus,
++                      const struct CrI2cMessage *messages, size_t count,
++                      uint32_t timeout_us, bool stop)
++{
++    int status = validate_bus(bus, CR_GENI_I2C);
++    if (status)
++        return status;
++    if (!messages || !count || count > 32 || timeout_us > 1000000U)
++        return CR_BUS_INVALID;
++    for (size_t i = 0; i < count; ++i)
++        if (messages[i].address > 0x7fU || !messages[i].data ||
++            !messages[i].length || messages[i].length > MAX_TRANSFER_BYTES)
++            return CR_BUS_INVALID;
++    if (rd(bus, GENI_SE_STATUS) & GENI_SE_STATUS_M_GENI_CMD_ACTIVE)
++        return CR_BUS_BUSY;
++    uint64_t start = bus->io.now_us(bus->io.context);
++    uint32_t timeout = timeout_us ? timeout_us : DEFAULT_TIMEOUT_US;
++    bus->busy = true;
++    for (size_t i = 0; i < count; ++i) {
++        const struct CrI2cMessage *msg = &messages[i];
++        bool hold = i + 1 < count || !stop;
++        uint32_t params = ((uint32_t)msg->address << 9) |
++            (hold ? I2C_GENI_M_CMD_PARAM_STOP_STRETCH : 0U);
++        /* An error may happen after START; always attempt STOP recovery. */
++        bus->i2c_held = true;
++        status = command(bus, msg->read ? I2C_GENI_M_CMD_OPCODE_READ :
++                         I2C_GENI_M_CMD_OPCODE_WRITE, params,
++                         msg->read ? NULL : msg->data, msg->read ? msg->data : NULL,
++                         msg->length, start, timeout);
++        if (status)
++            break;
++        bus->i2c_held = hold;
++    }
++    if (status)
++        (void)release_lines(bus);
++    bus->busy = false;
++    return status;
++}
++
++int CrGeniI2cTransfer(struct CrGeni *bus, const struct CrI2cMessage *messages,
++                      size_t count, uint32_t timeout_us)
++{ return i2c_transfer(bus, messages, count, timeout_us, true); }
++int CrGeniI2cStep(struct CrGeni *bus, const struct CrI2cMessage *message,
++                  bool stop, uint32_t timeout_us)
++{ return i2c_transfer(bus, message, 1, timeout_us, stop); }
++
++int CrGeniSpiTransfer(struct CrGeni *bus,
++                      const struct CrSpiSegment *segments, size_t count,
++                      uint32_t timeout_us)
++{
++    int status = validate_bus(bus, CR_GENI_SPI);
++    if (status)
++        return status;
++    if (!segments || !count || count > 32 || timeout_us > 1000000U)
++        return CR_BUS_INVALID;
++    for (size_t i = 0; i < count; ++i)
++        if ((!segments[i].tx && !segments[i].rx) || !segments[i].length ||
++            segments[i].length > MAX_TRANSFER_BYTES || segments[i].delay_us > 1000U)
++            return CR_BUS_INVALID;
++    if (rd(bus, GENI_SE_STATUS) & GENI_SE_STATUS_M_GENI_CMD_ACTIVE)
++        return CR_BUS_BUSY;
++    uint64_t start = bus->io.now_us(bus->io.context);
++    uint32_t timeout = timeout_us ? timeout_us : DEFAULT_TIMEOUT_US;
++    bus->busy = true;
++    bus->cs_asserted = true;
++    status = command(bus, SPI_GENI_M_CMD_OPCODE_CS_ASSERT, 0, NULL, NULL, 0,
++                     start, timeout);
++    for (size_t i = 0; !status && i < count; ++i) {
++        const struct CrSpiSegment *seg = &segments[i];
++        uint32_t opcode = (seg->tx ? SPI_GENI_M_CMD_OPCODE_TX_ONLY : 0U) |
++                          (seg->rx ? SPI_GENI_M_CMD_OPCODE_RX_ONLY : 0U);
++        status = command(bus, opcode, SPI_GENI_M_CMD_PARAM_FRAGMENTATION,
++                         seg->tx, seg->rx, seg->length, start, timeout);
++        if (!status && seg->delay_us) {
++            /* Protocol CS hold is required even if completion used the last
++             * part of the deadline. Its separately bounded maximum is 1 ms. */
++            bus->io.delay_us(bus->io.context, seg->delay_us);
++            if (expired(bus, start, timeout))
++                status = CR_BUS_TIMEOUT;
++        }
++    }
++    int release = release_lines(bus);
++    if (!status)
++        status = release;
++    bus->busy = false;
++    return status;
++}
++
++int CrGeniQuiesce(struct CrGeni *bus)
++{
++    int status;
++    if (!bus)
++        return CR_BUS_INVALID;
++    if (!bus->initialized)
++        return 0;
++    if (bus->busy)
++        return CR_BUS_BUSY;
++    status = release_lines(bus);
++    if (status)
++        return status;
++    wr(bus, GENI_SE_M_IRQ_CLEAR, UINT32_MAX);
++    wr(bus, GENI_SE_S_IRQ_CLEAR, UINT32_MAX);
++    if (bus->config.protocol == CR_GENI_SPI) {
++        for (size_t i = 0; i < ARRAY_COUNT(spi_saved); ++i)
++            wr(bus, spi_saved[i], bus->saved[ARRAY_COUNT(common_saved) + i]);
++    } else {
++        wr(bus, I2C_GENI_SE_SCL_COUNTERS, bus->saved[ARRAY_COUNT(common_saved)]);
++    }
++    /* IRQ_EN is restored last, after all local status has been cleared. */
++    for (size_t i = 0; i < ARRAY_COUNT(common_saved); ++i)
++        wr(bus, common_saved[i], bus->saved[i]);
++    bus->initialized = false;
++    return 0;
++}
+diff --git a/Library/GeniSeLib/geni_resources.c b/Library/GeniSeLib/geni_resources.c
+new file mode 100644
+index 0000000..e4f8983
+--- /dev/null
++++ b/Library/GeniSeLib/geni_resources.c
+@@ -0,0 +1,176 @@
++/* Copyright (c) 2025-2026 Project Aloha Authors and Kancy Joe.
++ * SPDX-License-Identifier: MIT */
++#include <Library/cr_resources.h>
++#include "../GeniSeLib/resource_io.h"
++static void gpio_configure(struct CrQupContext *p, unsigned pin, uint32_t config, unsigned value)
++{
++    GpioConfigParams params = {.PinNumber = pin, .OutputEnable = !!(config & CR_RESOURCE_BIT(9)),
++        .FunctionSel = (config >> 2) & 15, .Pull = config & 3,
++        .DriveStrength = (config >> 6) & 7, .OutputValue = value};
++    GpioSetConfig(&p->gpio, &params);
++}
++static void configure_pins(struct CrQupContext *p)
++{
++    const struct CrQupResources *board = p->board;
++    const uintptr_t pins[] = {board->bus_pins[0], board->bus_pins[1], board->irq_pin};
++    for (unsigned i = 0; i < 3; ++i)
++        p->saved_pins[i] = rd(p, pins[i]);
++    p->pins_claimed = true;
++    p->gpio.Io = p->io;
++    p->gpio.PinCount = 5;
++    p->gpio.RegCfg[0] = (GpioConfigRegInfo){.IoRegOffset = 4, .PullMsk = 3,
++        .MuxSelMsk = 15U << 2, .DriveStrengthMsk = 7U << 6,
++        .OutputEnableMsk = CR_RESOURCE_BIT(9), .InputMsk = 1, .OutputMsk = 2};
++    const uintptr_t addresses[] = {board->bus_pins[0], board->bus_pins[1], board->irq_pin,
++                                   board->reset_pin, board->gate_pin};
++    for (unsigned i = 0; i < 5; ++i) {
++        p->gpio.GpioPins[i].PinAddress = addresses[i];
++        p->gpio.GpioPins[i].pRegCfg = &p->gpio.RegCfg[0];
++        p->gpio.GpioPins[i].Reserved = !addresses[i];
++    }
++    /* Both verified bus routes use mux 1, 2 mA, no internal pulls. */
++    gpio_configure(p, 0, board->bus_config[0], GPIO_VALUE_UNCHANGE);
++    gpio_configure(p, 1, board->bus_config[1], GPIO_VALUE_UNCHANGE);
++    gpio_configure(p, 2, 0, GPIO_VALUE_UNCHANGE); /* No pull into an unpowered IC. */
++}
++static void gpio_output(struct CrQupContext *p, uintptr_t pin, bool high,
++                         uint32_t config)
++{
++    gpio_configure(p, pin == p->board->reset_pin ? 3 : 4, config, high ? GPIO_VALUE_HIGH : GPIO_VALUE_LOW);
++}
++
++int CrQupReset(struct CrQupContext *p)
++{
++    if (!p || !p->board || !CrIoValid(&p->io) || !p->i2c.initialized)
++        return CR_BUS_INVALID;
++    gpio_output(p, p->board->reset_pin, false, p->board->reset_config);
++    p->io.delay_us(p->io.context, p->board->reset_low_us);
++    gpio_output(p, p->board->reset_pin, true, p->board->reset_config);
++    return 0;
++}
++
++int CrQupInit(struct CrQupContext *p,
++                           const struct CrIo *io,
++                           const struct CrQupResources *board)
++{
++    int status;
++    uint8_t clock_index = 0;
++    if (!io)
++        io = CrIoDefault();
++    if (!p || !board || !CrIoValid(io) || board->rail_count == 0 ||
++        board->rail_count > 2 || !board->geni || !board->rsc_base ||
++        board->drv_id > 4 || !board->active_count || board->active_count > 32 ||
++        board->active_offset > 32 - board->active_count ||
++        board->tcs_offset > board->rsc_size ||
++        (board->active_offset + board->active_count) * 0x2a0U > board->rsc_size - board->tcs_offset ||
++        !board->source_hz || !board->speed_hz)
++        return CR_BUS_INVALID;
++    if (p->initialized || p->tcs_claimed || p->clocks_claimed || p->i2c.initialized)
++        return CR_BUS_BUSY;
++    *p = (struct CrQupContext){ .io = *io, .board = board,
++                                      .stage = CR_QUP_STAGE_CMD_DB };
++    for (unsigned i = 0; i < board->rail_count; ++i) {
++        status = board->cmd_db_base ?
++            CrCmdDbLookup(io, board->cmd_db_base, board->cmd_db_size,
++                                  board->rails[i].name, &p->rail_addresses[i]) :
++            CrCmdDbLookupDictionary(io, board->cmd_db_dictionary, board->rails[i].name,
++                                 &p->rail_addresses[i]);
++        if (status || ((p->rail_addresses[i] >> 16) & 7U) != 4U ||
++            p->rail_addresses[i] > UINT32_MAX - 8U ||
++            (((p->rail_addresses[i] + 8U) >> 16) & 7U) != 4U)
++            return status ? status : CR_BUS_UNSUPPORTED;
++    }
++    status = CrRpmhPollClaim(p);
++    if (status)
++        return status;
++    p->stage = CR_QUP_STAGE_CLOCK;
++    status = CrClockPollPrepare(p, &clock_index);
++    if (status)
++        goto fail;
++    configure_pins(p);
++    p->stage = CR_QUP_STAGE_GENI;
++    const struct CrGeniConfig config = {
++        .base = board->geni, .size = board->geni_size, .protocol = CR_GENI_I2C,
++        .source_hz = board->source_hz, .speed_hz = board->speed_hz, .clock_index = clock_index
++    };
++    status = CrGeniInit(&p->i2c, &config, io);
++    if (status)
++        goto fail;
++    p->stage = CR_QUP_STAGE_POWER;
++    if (board->gate_pin) {
++        gpio_output(p, board->gate_pin, true, CR_RESOURCE_BIT(9));
++        p->io.delay_us(p->io.context, board->gate_delay_us);
++    }
++    for (unsigned i = 0; i < board->rail_count; ++i) {
++        const struct CrRail *rail = &board->rails[i];
++        uint32_t address = p->rail_addresses[i];
++        if (rail->millivolts) {
++            status = CrRpmhPollWrite(p, address, rail->millivolts);
++            if (status)
++                goto fail;
++        }
++        if (rail->mode) {
++            status = CrRpmhPollWrite(p, address + 8U, rail->mode);
++            if (status)
++                goto fail;
++        }
++        status = CrRpmhPollWrite(p, address + 4U, 1);
++        if (status)
++            goto fail;
++    }
++    /* Pull up IRQ only once the complete power sequence has been ACKed. */
++    gpio_configure(p, 2, board->irq_config, GPIO_VALUE_UNCHANGE);
++    p->stage = CR_QUP_STAGE_RESET;
++    status = CrQupReset(p);
++    if (status)
++        goto fail;
++    p->initialized = true;
++    p->stage = CR_QUP_STAGE_READY;
++    return 0;
++fail:
++    /* A timed-out TCS remains owned until a verified late completion. */
++    (void)CrQupQuiesce(p);
++    return status;
++}
++
++
++int CrQupIrq(struct CrQupContext *p)
++{
++    if (!p || !p->board || !p->initialized)
++        return CR_BUS_INVALID;
++    return (GpioReadInputVal(&p->gpio, 2) != 0) != p->board->irq_active_low;
++}
++
++int CrQupQuiesce(struct CrQupContext *p)
++{
++    int status;
++    if (!p)
++        return CR_BUS_INVALID;
++    if (!CrIoValid(&p->io) || !p->board)
++        return 0;
++    if (p->tcs_pending) {
++        status = CrRpmhPollComplete(p);
++        if (status)
++            return status;
++    }
++    status = CrGeniQuiesce(&p->i2c);
++    if (status)
++        return status;
++    if (p->tcs_claimed) {
++        status = CrRpmhPollRestore(p);
++        if (status)
++            return status;
++    }
++    if (p->pins_claimed) {
++        wr(p, p->board->bus_pins[0], p->saved_pins[0]);
++        wr(p, p->board->bus_pins[1], p->saved_pins[1]);
++        wr(p, p->board->irq_pin, p->saved_pins[2]);
++        p->pins_claimed = false;
++    }
++    status = CrClockPollRestore(p);
++    if (status) return status;
++    /* Keep shared power rails enabled and reset released. Disabling a vote
++     * with no readable previous vote would lose inherited bootloader state. */
++    p->initialized = false;
++    return 0;
++}
+diff --git a/Library/GeniSeLib/geni_uefi.c b/Library/GeniSeLib/geni_uefi.c
+new file mode 100644
+index 0000000..a07092b
+--- /dev/null
++++ b/Library/GeniSeLib/geni_uefi.c
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: MIT */
++#include <Library/cr_geni.h>
++#include <Library/IoLib.h>
++#include <Library/TimerLib.h>
++#include <Library/BaseLib.h>
++static uint32_t read32(void *ctx, uintptr_t address)
++{ (void)ctx; MemoryFence(); uint32_t value = MmioRead32(address); MemoryFence(); return value; }
++static void write32(void *ctx, uintptr_t address, uint32_t value)
++{ (void)ctx; MemoryFence(); MmioWrite32(address, value); MemoryFence(); }
++static uint64_t now(void *ctx)
++{ (void)ctx; return GetTimeInNanoSecond(GetPerformanceCounter()) / 1000; }
++static void delay(void *ctx, uint32_t us)
++{ (void)ctx; MicroSecondDelay(us); }
++const struct CrIo *CrIoDefault(void)
++{
++  static const struct CrIo io = {0, read32, write32, now, delay};
++  return &io;
++}
++bool CrIoValid(const struct CrIo *io)
++{ return io && io->read32 && io->write32 && io->now_us && io->delay_us; }
+diff --git a/Library/GeniSeLib/resource_io.h b/Library/GeniSeLib/resource_io.h
+new file mode 100644
+index 0000000..a23a6a7
+--- /dev/null
++++ b/Library/GeniSeLib/resource_io.h
+@@ -0,0 +1,42 @@
++/* SPDX-License-Identifier: MIT */
++#pragma once
++#define CR_RESOURCE_BIT(n) (UINT32_C(1) << (n))
++#define RCG_CFG_MASK (0x1fU | (7U << 8) | (3U << 12))
++#define GPIO_CONFIG_MASK 0x3ffU
++#define CMD_DB_MAGIC UINT32_C(0x0c0330db)
++#define CMD_DB_HEADER_SIZE 144U
++#define CMD_DB_MAX_SIZE 0x20000U
++#define TCS_STRIDE 0x2a0U
++#define TCS_TRIGGER CR_RESOURCE_BIT(24)
++#define TCS_ENABLE CR_RESOURCE_BIT(16)
++#define TIMEOUT_US 1000U
++static inline uint32_t read_io(const struct CrIo *io, uintptr_t address)
++{
++    return io->read32(io->context, address);
++}
++static inline uint32_t rd(struct CrQupContext *p, uintptr_t address)
++{
++    return read_io(&p->io, address);
++}
++static inline void wr(struct CrQupContext *p, uintptr_t address, uint32_t value)
++{
++    p->io.write32(p->io.context, address, value);
++}
++static inline void rmw(struct CrQupContext *p, uintptr_t address,
++                uint32_t mask, uint32_t value)
++{
++    wr(p, address, (rd(p, address) & ~mask) | (value & mask));
++}
++static inline int wait_bits(struct CrQupContext *p, uintptr_t address,
++                     uint32_t mask, uint32_t value)
++{
++    uint64_t start = p->io.now_us(p->io.context);
++    for (unsigned i = 0; i <= TIMEOUT_US; ++i) {
++        if ((rd(p, address) & mask) == value)
++            return 0;
++        if (p->io.now_us(p->io.context) - start >= TIMEOUT_US)
++            break;
++        p->io.delay_us(p->io.context, 1);
++    }
++    return CR_BUS_TIMEOUT;
++}
+diff --git a/Library/GpioLib/gpio.c b/Library/GpioLib/gpio.c
+index 54d0817..c7c335b 100644
+--- a/Library/GpioLib/gpio.c
++++ b/Library/GpioLib/gpio.c
+@@ -40,9 +40,9 @@ VOID GpioReadConfig(
+   }
+ 
+   // Read current control register
+-  UINT32 GpioCtlRegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 GpioCtlRegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_CTL_REG, ConfigParams->PinNumber));
+-  UINT32 GpioIoRegVal  = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 GpioIoRegVal  = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_IO_REG, ConfigParams->PinNumber));
+ 
+   GpioConfigRegInfo *PinRegCfg =
+@@ -85,9 +85,9 @@ VOID GpioSetConfig(
+       ConfigParams->DriveStrength, ConfigParams->OutputValue);
+ 
+   // Read current control register
+-  UINT32 GpioCtlRegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 GpioCtlRegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_CTL_REG, ConfigParams->PinNumber));
+-  UINT32 GpioIoRegVal  = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 GpioIoRegVal  = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_IO_REG, ConfigParams->PinNumber));
+ 
+   GpioConfigRegInfo *PinRegCfg =
+@@ -105,52 +105,27 @@ VOID GpioSetConfig(
+       (CLR_BITS(GpioCtlRegVal, PinRegCfg->OutputEnableMsk) |
+        SET_FIELD(ConfigParams->OutputEnable, PinRegCfg->OutputEnableMsk));
+ 
+-  // Set output value if output
+-  if (ConfigParams->OutputEnable) {
+-    // Set value if output(io reg)
+-    if (ConfigParams->OutputValue != GPIO_VALUE_UNCHANGE)
+-      GpioIoRegVal =
+-          (CLR_BITS(GpioIoRegVal, PinRegCfg->OutputMsk) |
+-           SET_FIELD(ConfigParams->OutputValue & 1, PinRegCfg->OutputMsk));
+-
+-    // Clean up pull type for output
+-    GpioCtlRegVal =
+-        (CLR_BITS(GpioCtlRegVal, PinRegCfg->PullMsk) |
+-         SET_FIELD(GPIO_PULL_NONE, PinRegCfg->PullMsk));
+-    // Set drive strength for output
+-    if (ConfigParams->DriveStrength != GPIO_DRIVE_STRENGTH_UNCHANGE)
+-      GpioCtlRegVal =
+-          (CLR_BITS(GpioCtlRegVal, PinRegCfg->DriveStrengthMsk) |
+-           SET_FIELD(ConfigParams->DriveStrength, PinRegCfg->DriveStrengthMsk));
++  /* TLMM bias and drive strength also apply when an alternate function owns
++   * the pad. Preserve caller policy for both input and output GPIOs. */
++  if (ConfigParams->DriveStrength != GPIO_DRIVE_STRENGTH_UNCHANGE)
++    GpioCtlRegVal = CLR_BITS(GpioCtlRegVal, PinRegCfg->DriveStrengthMsk) |
++        SET_FIELD(ConfigParams->DriveStrength, PinRegCfg->DriveStrengthMsk);
++  if (ConfigParams->Pull != GPIO_PULL_UNCHANGE) {
++    UINT32 Pull = ConfigParams->Pull;
++    if (GpioContext->PullUpNoKeeper && Pull == GPIO_PULL_UP)
++      Pull = GPIO_PULL_UP_NO_KEEPER;
++    GpioCtlRegVal = CLR_BITS(GpioCtlRegVal, PinRegCfg->PullMsk) |
++        SET_FIELD(Pull, PinRegCfg->PullMsk);
+   }
+-  else {
+-    // Set pull type if input(ctl reg)
+-    if (ConfigParams->Pull != GPIO_PULL_UNCHANGE) {
+-      if (GpioContext->PullUpNoKeeper && ConfigParams->Pull == GPIO_PULL_UP) {
+-        GpioCtlRegVal =
+-            (CLR_BITS(GpioCtlRegVal, PinRegCfg->PullMsk) |
+-             SET_FIELD(GPIO_PULL_UP_NO_KEEPER, PinRegCfg->PullMsk));
+-      }
+-      else {
+-        GpioCtlRegVal =
+-            (CLR_BITS(GpioCtlRegVal, PinRegCfg->PullMsk) |
+-             SET_FIELD(ConfigParams->Pull, PinRegCfg->PullMsk));
+-      }
+-    }
+-  }
+-
+-  // Write back to registers
+-  CrMmioWrite32(
+-      GpioGetCfgRegByIndex(
+-          GpioContext, GPIO_CFG_REG_TYPE_CTL_REG, ConfigParams->PinNumber),
+-      GpioCtlRegVal);
+-  // Only write io reg when output mode or output value changed
+-  if (ConfigParams->OutputEnable &&
+-      ConfigParams->OutputValue != GPIO_VALUE_UNCHANGE)
+-    CrMmioWrite32(
+-        GpioGetCfgRegByIndex(
+-            GpioContext, GPIO_CFG_REG_TYPE_IO_REG, ConfigParams->PinNumber),
+-        GpioIoRegVal);
++  if (ConfigParams->OutputEnable && ConfigParams->OutputValue != GPIO_VALUE_UNCHANGE)
++    GpioIoRegVal = CLR_BITS(GpioIoRegVal, PinRegCfg->OutputMsk) |
++        SET_FIELD(ConfigParams->OutputValue & 1, PinRegCfg->OutputMsk);
++
++  if (ConfigParams->OutputEnable && ConfigParams->OutputValue != GPIO_VALUE_UNCHANGE)
++    GpioIoWrite(GpioContext, GpioGetCfgRegByIndex(GpioContext, GPIO_CFG_REG_TYPE_IO_REG,
++                ConfigParams->PinNumber), GpioIoRegVal);
++  GpioIoWrite(GpioContext, GpioGetCfgRegByIndex(GpioContext, GPIO_CFG_REG_TYPE_CTL_REG,
++              ConfigParams->PinNumber), GpioCtlRegVal);
+ }
+ 
+ GpioValueType
+@@ -165,7 +140,7 @@ GpioReadInputVal(IN GpioDeviceContext *GpioContext, IN UINT16 GpioIndex)
+   }
+ 
+   // Ignore io mode and only read current io register
+-  UINT32 GpioIoRegVal = CrMmioRead32(
++  UINT32 GpioIoRegVal = GpioIoRead(GpioContext,
+       GpioGetCfgRegByIndex(GpioContext, GPIO_CFG_REG_TYPE_IO_REG, GpioIndex));
+   return (GET_FIELD(
+              GpioIoRegVal, GpioContext->GpioPins[GpioIndex].pRegCfg->InputMsk))
+@@ -185,7 +160,7 @@ GpioReadOutputVal(IN GpioDeviceContext *GpioContext, IN UINT16 GpioIndex)
+   }
+ 
+   // Ignore io mode and only read current io register
+-  UINT32 GpioIoRegVal = CrMmioRead32(
++  UINT32 GpioIoRegVal = GpioIoRead(GpioContext,
+       GpioGetCfgRegByIndex(GpioContext, GPIO_CFG_REG_TYPE_IO_REG, GpioIndex));
+   return (GET_FIELD(
+              GpioIoRegVal, GpioContext->GpioPins[GpioIndex].pRegCfg->OutputMsk))
+@@ -203,7 +178,7 @@ GpioReadIrqStatus(IN GpioDeviceContext *GpioContext, IN UINT16 GpioIndex)
+     return FALSE;
+   }
+ 
+-  UINT32 IntStatusRegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 IntStatusRegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_INT_STATUS_REG, GpioIndex));
+ 
+   return (IntStatusRegVal &
+@@ -223,14 +198,14 @@ VOID GpioCleanIrqStatus(IN GpioDeviceContext *GpioContext, IN UINT16 GpioIndex)
+   }
+ 
+   // Clear interrupt status
+-  UINT32 IntStatusRegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 IntStatusRegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_INT_STATUS_REG, GpioIndex));
+   IntStatusRegVal        = CLR_BITS(
+       IntStatusRegVal,
+       GpioContext->GpioPins[GpioIndex].pRegCfg->InterruptStatusMsk);
+ 
+   // Write Back
+-  CrMmioWrite32(
++  GpioIoWrite(GpioContext,
+       GpioGetCfgRegByIndex(
+           GpioContext, GPIO_CFG_REG_TYPE_INT_STATUS_REG, GpioIndex),
+       IntStatusRegVal);
+@@ -253,7 +228,7 @@ GpioCheckInterruptEnabled(
+     return CR_SUCCESS;
+   }
+ 
+-  UINT32 RegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 RegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex));
+ 
+   *Enabled =
+@@ -279,7 +254,7 @@ GpioEnableInterrupt(
+     return CR_SUCCESS;
+   }
+ 
+-  UINT32 RegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 RegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex));
+ 
+   if (Enable) {
+@@ -303,7 +278,7 @@ GpioEnableInterrupt(
+     // Read back and check if currenly level triggered
+     BOOLEAN IsLevelTrigger =
+         GET_FIELD(
+-            CrMmioRead32(GpioGetCfgRegByIndex(
++            GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+                 GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex)),
+             GpioContext->GpioPins[GpioIndex].pRegCfg->InterruptDetectionMsk) ==
+         0;
+@@ -316,7 +291,7 @@ GpioEnableInterrupt(
+   }
+ 
+   // Write back to register
+-  CrMmioWrite32(
++  GpioIoWrite(GpioContext,
+       GpioGetCfgRegByIndex(
+           GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex),
+       RegVal);
+@@ -339,7 +314,7 @@ CR_STATUS GpioMaskInterrupt(
+     return CR_SUCCESS;
+   }
+ 
+-  UINT32 RegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  UINT32 RegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex));
+   if (Mask) {
+     // Read back and check if currenly level triggered
+@@ -372,7 +347,7 @@ CR_STATUS GpioMaskInterrupt(
+              1, GpioContext->GpioPins[GpioIndex].pRegCfg->InterruptEnMsk));
+   }
+   // Write back to register
+-  CrMmioWrite32(
++  GpioIoWrite(GpioContext,
+       GpioGetCfgRegByIndex(
+           GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex),
+       RegVal);
+@@ -406,7 +381,7 @@ CR_STATUS GpioSetInterruptCfg(
+   }
+ 
+   // Route interrupt to apps processor
+-  IntTargetRegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  IntTargetRegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_INT_TARGET_REG, GpioIndex));
+ 
+   // Use kpss val
+@@ -417,13 +392,13 @@ CR_STATUS GpioSetInterruptCfg(
+        SET_FIELD(
+            GpioContext->GpioPins[GpioIndex].pRegCfg->TargetKpssVal,
+            GpioContext->GpioPins[GpioIndex].pRegCfg->InterruptTargetMsk));
+-  CrMmioWrite32(
++  GpioIoWrite(GpioContext,
+       GpioGetCfgRegByIndex(
+           GpioContext, GPIO_CFG_REG_TYPE_INT_TARGET_REG, GpioIndex),
+       IntTargetRegVal);
+ 
+   // Configure interrupt trigger type
+-  IntCfgRegVal = CrMmioRead32(GpioGetCfgRegByIndex(
++  IntCfgRegVal = GpioIoRead(GpioContext, GpioGetCfgRegByIndex(
+       GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex));
+   IrqEnabled =
+       GET_FIELD(
+@@ -595,7 +570,7 @@ CR_STATUS GpioSetInterruptCfg(
+     GpioCleanIrqStatus(GpioContext, GpioIndex);
+ 
+   // Write back to register
+-  CrMmioWrite32(
++  GpioIoWrite(GpioContext,
+       GpioGetCfgRegByIndex(
+           GpioContext, GPIO_CFG_REG_TYPE_INT_CFG_REG, GpioIndex),
+       IntCfgRegVal);
+diff --git a/Library/GpioLib/gpio_internal.h b/Library/GpioLib/gpio_internal.h
+index ab0df5f..0f28a2b 100644
+--- a/Library/GpioLib/gpio_internal.h
++++ b/Library/GpioLib/gpio_internal.h
+@@ -5,6 +5,7 @@
+  */
+ #pragma once
+ #include <Library/gpio.h>
++#include <oskal/cr_memory.h>
+ #include <oskal/common.h>
+ #include <oskal/cr_debug.h>
+ #include <oskal/cr_status.h>
+@@ -46,3 +47,11 @@ STATIC inline UINTN GpioGetCfgRegByIndex(IN GpioDeviceContext *GpioContext,
+     return 0;
+   }
+ }
++
++STATIC inline UINT32 GpioIoRead(GpioDeviceContext *ctx, UINTN address) {
++  return ctx->Io.read32 ? ctx->Io.read32(ctx->Io.context, address) : CrMmioRead32(address);
++}
++STATIC inline VOID GpioIoWrite(GpioDeviceContext *ctx, UINTN address, UINT32 value) {
++  if (ctx->Io.write32) ctx->Io.write32(ctx->Io.context, address, value);
++  else CrMmioWrite32(address, value);
++}
+diff --git a/Library/PmicGpioLib/pmic_gpio.c b/Library/PmicGpioLib/pmic_gpio.c
+index 297f974..ddec180 100644
+--- a/Library/PmicGpioLib/pmic_gpio.c
++++ b/Library/PmicGpioLib/pmic_gpio.c
+@@ -743,3 +743,11 @@ PmicGpioEnableInterrupt(
+   return Context->Bus.EnableIrq(
+       Context->Bus.Context, Sid, Peripheral, 0, Enable);
+ }
++
++CR_STATUS PmicGpioReadStatus(CONST PmicGpioBusOps *Bus, UINT8 Sid,
++                            UINT16 PeripheralAddress, UINT8 *Status)
++{
++  if (Bus == NULL || Bus->Read == NULL || Status == NULL || Sid > 15 ||
++      (PeripheralAddress & 0xff) != 0) return CR_INVALID_PARAMETER;
++  return Bus->Read(Bus->Context, Sid, PeripheralAddress + 0x10, Status, 1);
++}
+diff --git a/Library/RpmhLib/rpmh.inf b/Library/RpmhLib/rpmh.inf
+index a658dca..dc2679d 100644
+--- a/Library/RpmhLib/rpmh.inf
++++ b/Library/RpmhLib/rpmh.inf
+@@ -19,6 +19,7 @@
+   EmbeddedPkg/EmbeddedPkg.dec
+ 
+ [LibraryClasses]
++  GeniSeLib
+   ArmLib
+   DebugLib
+   IoLib
+@@ -27,3 +28,4 @@
+ 
+ [Sources.common]
+   rpmh.c
++  rpmh_poll.c
+diff --git a/Library/RpmhLib/rpmh_poll.c b/Library/RpmhLib/rpmh_poll.c
+new file mode 100644
+index 0000000..dfb9ac6
+--- /dev/null
++++ b/Library/RpmhLib/rpmh_poll.c
+@@ -0,0 +1,156 @@
++/* Copyright (c) 2025-2026 Project Aloha Authors and Kancy Joe.
++ * SPDX-License-Identifier: MIT */
++#include <Library/cr_resources.h>
++#include "../GeniSeLib/resource_io.h"
++static bool valid(const struct CrQupContext *p)
++{
++    if (!p || !p->board || !CrIoValid(&p->io)) return false;
++    const struct CrQupResources *r = p->board;
++    return r->rsc_base && !(r->rsc_base & 3) && r->rsc_size >= 16 &&
++        r->rsc_base <= UINTPTR_MAX - r->rsc_size && r->drv_id <= 4 &&
++        r->active_count && r->active_count <= 32 &&
++        r->active_offset <= 32 - r->active_count && !(r->tcs_offset & 3) &&
++        r->tcs_offset <= r->rsc_size &&
++        (r->active_offset + r->active_count) * TCS_STRIDE <= r->rsc_size - r->tcs_offset;
++}
++static uint32_t tcs_control_offset(const struct CrQupContext *p)
++{
++    return p->rsc_major == 2 ? 0x14U : 0x24U;
++}
++static uint32_t tcs_command_offset(const struct CrQupContext *p)
++{
++    return p->rsc_major == 2 ? 0x30U : 0x34U;
++}
++static uintptr_t tcs_address(const struct CrQupContext *p)
++{
++    return (p->board->rsc_base + p->board->tcs_offset) + p->tcs_slot * TCS_STRIDE;
++}
++
++/* Only claim an idle, untriggered active TCS in the supplied DRV with no pending IRQ.
++ * The sleep/wake/control TCSes and other DRVs are never touched. */
++int CrRpmhPollClaim(struct CrQupContext *p)
++{
++    if (!valid(p)) return CR_BUS_INVALID;
++    if (p->tcs_claimed || p->tcs_pending) return CR_BUS_BUSY;
++    p->rsc_major = (uint8_t)(rd(p, p->board->rsc_base) >> 16);
++    if (p->rsc_major != 2 && p->rsc_major != 3)
++        return CR_BUS_UNSUPPORTED;
++    uint32_t config = rd(p, p->board->rsc_base + 0xcU);
++    unsigned commands = (config >> 27) & 0x1fU;
++    unsigned count = (config >> (6U * p->board->drv_id)) & 0x3fU;
++    if (!commands || commands > 16 || count < p->board->active_offset + p->board->active_count || count > 32)
++        return CR_BUS_UNSUPPORTED;
++    for (unsigned slot = p->board->active_offset; slot < p->board->active_offset + p->board->active_count; ++slot) {
++        p->tcs_slot = (uint8_t)slot;
++        uintptr_t base = tcs_address(p);
++        uint32_t control = tcs_control_offset(p);
++        uint32_t command = tcs_command_offset(p);
++        if (!rd(p, base + control + 4U) ||
++            (rd(p, base + control) & TCS_TRIGGER) ||
++            (rd(p, (p->board->rsc_base + p->board->tcs_offset) + 4U) & CR_RESOURCE_BIT(slot)))
++            continue;
++        p->saved_tcs[0] = rd(p, base + control);
++        p->saved_tcs[1] = rd(p, base + control - 4U);
++        p->saved_tcs[2] = rd(p, base + control + 8U);
++        p->saved_tcs[3] = rd(p, base + command);
++        p->saved_tcs[4] = rd(p, base + command + 4U);
++        p->saved_tcs[5] = rd(p, base + command + 8U);
++        p->saved_tcs[6] = rd(p, (p->board->rsc_base + p->board->tcs_offset)) & CR_RESOURCE_BIT(slot);
++        p->tcs_claimed = true;
++        return 0;
++    }
++    return CR_BUS_BUSY;
++}
++
++static int rpmh_stop(struct CrQupContext *p)
++{
++    uintptr_t control = tcs_address(p) + tcs_control_offset(p);
++    /* RSC requires clearing trigger first, then AMC mode in a second write. */
++    uint32_t value = rd(p, control) & ~TCS_TRIGGER;
++    wr(p, control, value);
++    int status = wait_bits(p, control, TCS_TRIGGER, 0);
++    if (status)
++        return status;
++    wr(p, control, value & ~TCS_ENABLE);
++    return wait_bits(p, control, TCS_TRIGGER | TCS_ENABLE, 0);
++}
++
++int CrRpmhPollRestore(struct CrQupContext *p)
++{
++    if (!valid(p)) return CR_BUS_INVALID;
++    uintptr_t base = tcs_address(p);
++    uint32_t control = tcs_control_offset(p), command = tcs_command_offset(p);
++    int status;
++    if (!p->tcs_claimed)
++        return 0;
++    if (p->tcs_pending)
++        return CR_BUS_BUSY;
++    status = rpmh_stop(p);
++    if (status)
++        return status;
++    wr(p, base + control + 8U, 0);
++    wr(p, base + command, p->saved_tcs[3]);
++    wr(p, base + command + 4U, p->saved_tcs[4]);
++    wr(p, base + command + 8U, p->saved_tcs[5]);
++    wr(p, base + control - 4U, p->saved_tcs[1]);
++    wr(p, base + control + 8U, p->saved_tcs[2]);
++    wr(p, base + control, p->saved_tcs[0]);
++    rmw(p, (p->board->rsc_base + p->board->tcs_offset), CR_RESOURCE_BIT(p->tcs_slot), p->saved_tcs[6]);
++    p->tcs_claimed = false;
++    return 0;
++}
++
++int CrRpmhPollComplete(struct CrQupContext *p)
++{
++    if (!valid(p) || !p->tcs_claimed || !p->tcs_pending) return CR_BUS_INVALID;
++    uintptr_t base = tcs_address(p);
++    uint32_t command = tcs_command_offset(p);
++    uint32_t bit = CR_RESOURCE_BIT(p->tcs_slot);
++    int status = wait_bits(p, (p->board->rsc_base + p->board->tcs_offset) + 4U, bit, bit);
++    if (status)
++        return status; /* Keep ownership; a late completion must not be reused. */
++    uint32_t completed = rd(p, base + command + 12U);
++    if ((completed & (CR_RESOURCE_BIT(8) | CR_RESOURCE_BIT(16))) != (CR_RESOURCE_BIT(8) | CR_RESOURCE_BIT(16)))
++        status = CR_BUS_IO;
++    int stopped = rpmh_stop(p);
++    if (stopped)
++        return stopped;
++    wr(p, (p->board->rsc_base + p->board->tcs_offset) + 8U, bit);
++    p->tcs_pending = false;
++    int restored = CrRpmhPollRestore(p);
++    return status ? status : restored;
++}
++
++int CrRpmhPollWrite(struct CrQupContext *p, uint32_t address, uint32_t value)
++{
++    if (!valid(p) || (address & 3)) return CR_BUS_INVALID;
++    if (p->tcs_pending) return CR_BUS_BUSY;
++    int status;
++    if (!p->tcs_claimed) {
++        status = CrRpmhPollClaim(p);
++        if (status)
++            return status;
++    }
++    uintptr_t base = tcs_address(p);
++    uint32_t control = tcs_control_offset(p), command = tcs_command_offset(p);
++    if (((address >> 16) & 7U) != 4U)
++        return CR_BUS_INVALID;
++    /* Completion status remains readable with the interrupt output masked. */
++    rmw(p, (p->board->rsc_base + p->board->tcs_offset), CR_RESOURCE_BIT(p->tcs_slot), 0);
++    status = rpmh_stop(p);
++    if (status)
++        return status;
++    wr(p, base + control + 8U, 0);
++    wr(p, base + command, 8U | CR_RESOURCE_BIT(8) | CR_RESOURCE_BIT(16));
++    wr(p, base + command + 4U, address);
++    wr(p, base + command + 8U, value);
++    wr(p, base + control - 4U, 1);
++    wr(p, base + control + 8U, 1);
++    wr(p, base + control, TCS_ENABLE);
++    status = wait_bits(p, base + control, TCS_ENABLE, TCS_ENABLE);
++    if (status)
++        return status;
++    p->tcs_pending = true;
++    wr(p, base + control, TCS_ENABLE | TCS_TRIGGER);
++    return CrRpmhPollComplete(p);
++}
+diff --git a/Target/Sm8450/CrQupTarget.c b/Target/Sm8450/CrQupTarget.c
+index b7cdf80..ba6de5b 100644
+--- a/Target/Sm8450/CrQupTarget.c
++++ b/Target/Sm8450/CrQupTarget.c
+@@ -88,7 +88,14 @@ STATIC CONST CR_TARGET_GPI_CONTROLLER mSm8450Gpi[] = {
+   },
+ };
+ 
++/* HDK8450 LT9611: Linux i2c9, qup9 mux on GPIO32/33. */
++STATIC CONST CR_TARGET_QUP_FIFO_I2C mSm8450FifoI2c = {
++  .Instance = 10, .Wrapper = 1, .Engine = 1, .Pins = {32, 33}, .Mux = 1, .Pull = 3,
++  .ClockProvider = "gcc", .Clocks = {"gcc_qupv3_wrap_1_m_ahb_clk",
++      "gcc_qupv3_wrap_1_s_ahb_clk", "gcc_qupv3_wrap1_s1_clk"},
++};
+ STATIC CR_TARGET_QUP_CONTEXT mSm8450QupContext = {
++  .FifoI2c = &mSm8450FifoI2c,
+   .Qup      = mSm8450Qup,
+   .QupCount = sizeof (mSm8450Qup) / sizeof (mSm8450Qup[0]),
+   .Gpi      = mSm8450Gpi,
+diff --git a/Tests/I2cCrTest.c b/Tests/I2cCrTest.c
+index bb43c3c..1a09d53 100644
+--- a/Tests/I2cCrTest.c
++++ b/Tests/I2cCrTest.c
+@@ -5,9 +5,18 @@
+ #include "MuBusTestCommon.h"
+ #include "../Driver/I2CCrDxe/I2CCrDxe.c"
+ 
+-#define TEST_CONFIGURE_PINS I2cCrConfigurePins
++static const CR_TARGET_QUP_FIFO_I2C PinTarget = {.Pins = {32, 33}, .Mux = 1, .Pull = 3};
++static I2C_CR_INSTANCE PinInstance = {.FifoTarget = &PinTarget};
++#define TEST_CONFIGURE_PINS() I2cCrConfigurePins(&PinInstance)
+ #include "GeniPinmuxTest.h"
+ 
++/* This suite covers the protocol adapter. FIFO behavior is exercised by
++ * I2cFifoTransportTest; reaching hardware here is an unexpected fallback. */
++const struct CrIo *CrIoDefault(void) { return NULL; }
++bool CrIoValid(const struct CrIo *io) {
++  return io && io->read32 && io->write32 && io->now_us && io->delay_us;
++}
++
+ EFI_GUID gQcomI2CProtocolGuid;
+ EFI_GUID gEfiQupCrProtocolGuid;
+ EFI_GUID gEfiI2cMasterProtocolGuid;
+diff --git a/Tests/I2cFifoTransportTest.c b/Tests/I2cFifoTransportTest.c
+index a4034ec..8c89069 100644
+--- a/Tests/I2cFifoTransportTest.c
++++ b/Tests/I2cFifoTransportTest.c
+@@ -2,8 +2,10 @@
+ #include "GeniTestCommon.h"
+ #include "../Driver/I2CCrDxe/I2CCrDxe.c"
+ 
++#define I2C_FIFO_SE_BASE 0xa84000U
+ static UINT32 Registers[0x1000 / 4];
+-static UINT32 CommandCount;
++static UINT32 CommandCount, RxWatermark, RxReadyWatermark;
++static UINT64 Ticks;
+ static UINT32 InjectIrq, InjectCommand, AbortCount;
+ static BOOLEAN DropReadData, DropDone;
+ static EFI_STATUS EFIAPI Pins (EFI_GPIO_CR_PROTOCOL *This, GpioConfigParams *Config) {
+@@ -33,24 +35,40 @@ UINT32 EFIAPI MmioWrite32 (UINTN Address, UINT32 Value) {
+   if (Offset == SE_M_IRQ_CLEAR) Registers[SE_M_IRQ_STATUS / 4] &= ~Value;
+   else Registers[Offset / 4] = Value;
+   if (Offset == SE_M_CMD0) {
+-    ++CommandCount;
++    if ((Value >> 27) <= I2C_CMD_WRITE_READ) ++CommandCount;
+     if ((Value >> 27) == I2C_CMD_READ) {
+       /* A zero ready-for-receive threshold backpressures even an empty
+          FIFO. A short chip-ID read must remain receivable below RX_WM. */
+       if (Registers[SE_RX_RFR_WATERMARK / 4] != 0) {
+-        Registers[SE_RX_FIFO_STATUS / 4] = DropReadData ? 0 : 1;
++        Registers[SE_RX_FIFO_STATUS / 4] = DropReadData ? 0 : (1U<<31) | (1U<<28) | 1;
+         Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_DONE | SE_M_RX_FIFO_LAST;
+       }
+-    } else Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_DONE;
++    } else if ((Value >> 27) == I2C_CMD_WRITE) Registers[SE_M_IRQ_STATUS / 4] = SE_M_TX_FIFO_WATERMARK;
++    else { ++AbortCount; Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_DONE; }
+     if ((Value >> 27) == InjectCommand) {
+       Registers[SE_M_IRQ_STATUS / 4] |= InjectIrq;
+       if (DropDone) Registers[SE_M_IRQ_STATUS / 4] &= ~SE_M_CMD_DONE;
+     }
+   }
++  if (Offset == SE_TX_FIFO) Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_DONE |
++      (InjectCommand == I2C_CMD_WRITE ? InjectIrq : 0);
++  if (Offset == SE_RX_WATERMARK && Value) RxWatermark = Value;
++  if (Offset == SE_RX_RFR_WATERMARK && Value) RxReadyWatermark = Value;
+   if (Offset == SE_M_CMD_CTRL) { ++AbortCount; Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_ABORT; }
+   return Value;
+ }
+-UINTN EFIAPI MicroSecondDelay (UINTN Delay) { return Delay; }
++UINTN EFIAPI MicroSecondDelay (UINTN Delay) { Ticks += Delay; return Delay; }
++static uint32_t io_read(void *c, uintptr_t a) { (void)c; return MmioRead32(a); }
++static void io_write(void *c, uintptr_t a, uint32_t v) { (void)c; MmioWrite32(a,v); }
++static uint64_t io_time(void *c) { (void)c; return Ticks; }
++static void io_delay(void *c, uint32_t us) { (void)c; MicroSecondDelay(us); }
++const struct CrIo *CrIoDefault(void) {
++  static const struct CrIo io = {0, io_read, io_write, io_time, io_delay}; return &io;
++}
++bool CrIoValid(const struct CrIo *io) { return io && io->read32 && io->write32 && io->now_us && io->delay_us; }
++static const CR_TARGET_QUP_FIFO_I2C FifoTarget = {
++ .Instance=10, .Wrapper=1, .Engine=1, .Pins={32,33}, .Mux=1, .Pull=3
++};
+ int main (void) {
+   I2C_CR_INSTANCE Instance = {0};
+   MU_I2C_SLAVE_CONFIG Config = {.SlaveAddress = 0x2b, .BusFrequencyKHz = 400,
+@@ -63,9 +81,12 @@ int main (void) {
+   UINT32 Transferred;
+   TestOwnership ();
+   BootServices.LocateProtocol = Locate;
+-  Instance.Protocol.Instance = I2C_FIFO_INSTANCE;
+-  mFifoResourcesReady = TRUE;
+-  Registers[SE_HW_PARAM_0 / 4] = 16U << 16;
++  Instance.Protocol.Instance = 10;
++  Instance.FifoTarget = &FifoTarget;
++  Instance.FifoConfig.base = I2C_FIFO_SE_BASE;
++  Instance.FifoConfig.size = sizeof(Registers);
++  Instance.FifoResourcesReady = TRUE;
++  Registers[SE_HW_PARAM_0 / 4] = Registers[0xe28 / 4] = (16U << 16) | (32U << 24);
+   for (UINT32 Protocol = 0; Protocol < 3; ++Protocol) {
+     Registers[SE_GENI_FW_REVISION_RO / 4] = Protocol << 8;
+     assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
+@@ -81,8 +102,8 @@ int main (void) {
+   assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
+       NULL, NULL, 0, &Transferred) == EFI_SUCCESS);
+   assert (Id == 0x11 && Transferred == 2 && CommandCount == 2);
+-  assert (Registers[SE_RX_WATERMARK / 4] == 15);
+-  assert (Registers[SE_RX_RFR_WATERMARK / 4] == 16);
++  assert (RxWatermark > 0 && RxWatermark < RxReadyWatermark);
++  assert (RxReadyWatermark <= 16);
+   assert (mSeOwners[1][1].Busy == 0);
+   /* Exercise the real repeated-start adapter and error cleanup: terminal
+      read NACK is valid, address/write NACK and independent GP errors are not. */
+diff --git a/Tests/run_clock_tests.py b/Tests/run_clock_tests.py
+index 16afe7c..06a0adb 100644
+--- a/Tests/run_clock_tests.py
++++ b/Tests/run_clock_tests.py
+@@ -12,7 +12,7 @@ parser.add_argument("--cc", default="clang")
+ args = parser.parse_args()
+ with tempfile.TemporaryDirectory(prefix="crane-clock-test-") as tmp:
+     common = [
+-        args.cc, "-std=c11", "-fshort-wchar", "-g", "-O1",
++        args.cc, "-std=c11", "-DCR_HOST_TEST", "-fshort-wchar", "-g", "-O1",
+         "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+         "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+         "-I" + str(crane / "Include"),
+diff --git a/Tests/run_geni_transport_tests.py b/Tests/run_geni_transport_tests.py
+index 7fd0474..34a39bf 100644
+--- a/Tests/run_geni_transport_tests.py
++++ b/Tests/run_geni_transport_tests.py
+@@ -3,9 +3,13 @@
+ from pathlib import Path
+ import subprocess
+ import tempfile
++import argparse
+ 
+ crane = Path(__file__).resolve().parents[1]
+-edk2 = crane.parents[1] / "MU_BASECORE"
++parser = argparse.ArgumentParser()
++parser.add_argument("--edk2", required=True, type=Path)
++args = parser.parse_args()
++edk2 = args.edk2
+ with tempfile.TemporaryDirectory(prefix="crane-geni-test-") as tmp:
+     common = ["clang", "-std=c11", "-fshort-wchar", "-g", "-O1",
+               "-Wall", "-Wextra", "-Werror", "-DCRANE_HOST_TEST", "-DCRANE_MMIO_TEST",
+@@ -17,5 +21,6 @@ with tempfile.TemporaryDirectory(prefix="crane-geni-test-") as tmp:
+               "-I" + str(edk2 / "MdeModulePkg/Include")]
+     for source in ["GpiTransportTest.c", "I2cFifoTransportTest.c"]:
+         exe = Path(tmp) / Path(source).stem
+-        subprocess.run(common + [str(crane / "Tests" / source), "-o", str(exe)], check=True)
++        extra = [str(crane / "Library/GeniSeLib/geni_fifo.c")] if source == "I2cFifoTransportTest.c" else []
++        subprocess.run(common + [str(crane / "Tests" / source)] + extra + ["-o", str(exe)], check=True)
+         subprocess.run([str(exe)], check=True)
+diff --git a/Tests/run_mu_bus_tests.py b/Tests/run_mu_bus_tests.py
+index 5101912..7ed051b 100644
+--- a/Tests/run_mu_bus_tests.py
++++ b/Tests/run_mu_bus_tests.py
+@@ -9,6 +9,8 @@ crane = Path(__file__).resolve().parents[1]
+ parser = argparse.ArgumentParser()
+ parser.add_argument("--edk2", type=Path, default=crane.parents[1] / "MU_BASECORE")
+ parser.add_argument("--cc", default="clang")
++parser.add_argument("--lt9611", action="store_true",
++                    help="Also run optional LT9611 driver tests when that driver extension is present")
+ args = parser.parse_args()
+ with tempfile.TemporaryDirectory(prefix="crane-mu-bus-test-") as tmp:
+     common = [
+@@ -19,8 +21,12 @@ with tempfile.TemporaryDirectory(prefix="crane-mu-bus-test-") as tmp:
+         "-I" + str(args.edk2 / "MdePkg/Include"),
+         "-I" + str(args.edk2 / "MdePkg/Include/X64"),
+     ]
+-    for source in ["I2cCrTest.c", "SpiCrTest.c", "Lt9611I2cTest.c"]:
++    sources = ["I2cCrTest.c", "SpiCrTest.c"]
++    if args.lt9611:
++        sources.append("Lt9611I2cTest.c")
++    for source in sources:
+         exe = Path(tmp) / Path(source).stem
+-        subprocess.run(common + [str(crane / "Tests" / source), "-o", str(exe)],
++        extra = [str(crane / "Library/GeniSeLib/geni_fifo.c")] if source == "I2cCrTest.c" else []
++        subprocess.run(common + [str(crane / "Tests" / source)] + extra + ["-o", str(exe)],
+                        check=True)
+         subprocess.run([str(exe)], check=True)
+diff --git a/Tests/run_rpmh_tests.py b/Tests/run_rpmh_tests.py
+index 6897db0..116cc96 100644
+--- a/Tests/run_rpmh_tests.py
++++ b/Tests/run_rpmh_tests.py
+@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix="crane-rpmh-test-") as tmp:
+     exe = Path(tmp) / "rpmh-test"
+     subprocess.run([
+         args.cc,
+-        "-std=c11",
++        "-std=c11", "-DCR_HOST_TEST",
+         "-fshort-wchar",
+         "-g",
+         "-O1",
+@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix="crane-rpmh-test-") as tmp:
+     subprocess.run([str(exe)], check=True)
+     subprocess.run([
+         args.cc,
+-        "-std=c11",
++        "-std=c11", "-DCR_HOST_TEST",
+         "-fshort-wchar",
+         "-g",
+         "-O1",

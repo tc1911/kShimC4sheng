@@ -1,0 +1,73 @@
+/dts-v1/;
+/* Focused binding fixture, not a complete board DT. Numeric resources and
+ * properties follow OnePlus cad09e061ef6cf689a4a1e54d27562e0f042236a:
+ * kona.dtsi, kona-qupv3.dtsi, kona-pinctrl.dtsi, kona-regulators.dtsi,
+ * kona-qrd.dtsi and kona-hdk.dtsi. Selection is empty as on stock HDK. */
+/memreserve/ 0x90000000 0x1000;
+/ {
+    #address-cells=<1>; #size-cells=<1>;
+    reserved-memory {
+        #address-cells=<1>; #size-cells=<1>; ranges;
+        cmd-db@80860000 { compatible="qcom,cmd-db"; reg=<0x80860000 0x20000>; no-map; };
+    };
+    gcc: clock@100000 { compatible="qcom,gcc-kona"; reg=<0x100000 0x200000>; #clock-cells=<1>; };
+    tlmm: pinctrl@f000000 {
+        compatible="qcom,kona-pinctrl"; reg=<0xf000000 0x1000000>;
+        gpio-controller; #gpio-cells=<2>;
+        buspins: buspins { mux { pins="gpio36","gpio37"; function="qup13"; };
+            config { pins="gpio36","gpio37"; drive-strength=<2>; bias-disable; }; };
+        touchpins: touchpins { mux { pins="gpio38","gpio39"; function="gpio"; };
+            config { pins="gpio38","gpio39"; drive-strength=<8>; bias-pull-up; }; };
+    };
+    wrapper: geniqup@ac0000 { reg=<0xac0000 0x6000>; };
+    panel: panel { };
+    display { qcom,dsi-display-active; qcom,dsi-panel=<&panel>; };
+    i2c@a94000 {
+        compatible="qcom,i2c-geni"; reg=<0xa94000 0x4000>;
+        #address-cells=<1>; #size-cells=<0>;
+        qcom,wrapper-core=<&wrapper>; clocks=<&gcc 116>,<&gcc 134>,<&gcc 135>;
+        clock-names="se-clk","m-ahb","s-ahb";
+        pinctrl-0=<&buspins>; qcom,i2c-touch-active="";
+        touch@49 {
+            compatible="st,fts"; reg=<0x49>; panel=<&panel>;
+            pinctrl-0=<&touchpins>;
+            st,irq-gpio=<&tlmm 39 0x2008>; st,reset-gpio=<&tlmm 38 0>;
+            st,x-flip; st,y-flip;
+            avdd-supply=<&l13>; vdd-supply=<&l1>;
+        };
+    };
+    regulators {
+        ldoa13 {
+            compatible="qcom,rpmh-vrm-regulator"; qcom,resource-name="ldoa13";
+            qcom,regulator-type="pmic5-ldo";
+            l13: regulator { regulator-min-microvolt=<3008000>; regulator-max-microvolt=<3008000>; };
+        };
+        ldoc1 {
+            compatible="qcom,rpmh-vrm-regulator"; qcom,resource-name="ldoc1";
+            qcom,regulator-type="pmic5-ldo";
+            l1: regulator { regulator-min-microvolt=<1800000>; regulator-max-microvolt=<1800000>; };
+        };
+    };
+    rsc@18200000 {
+        compatible="qcom,rpmh-rsc"; label="apps_rsc";
+        reg=<0x18200000 0x10000>,<0x18210000 0x10000>,<0x18220000 0x10000>;
+        reg-names="drv-0","drv-1","drv-2";
+        qcom,drv-id=<2>; qcom,tcs-offset=<0xd00>; qcom,tcs-config=<2 2 0 3 1 3 3 1>;
+    };
+    spmi0: spmi@c440000 {
+        compatible="qcom,spmi-pmic-arb"; qcom,ee=<0>; qcom,bus-id=<0>;
+        reg=<0xc440000 0x1100>,<0xc600000 0x2000000>,<0xe600000 0x100000>;
+        reg-names="core","chnls","obsrvr"; #address-cells=<2>; #size-cells=<0>;
+        pmic@0 { reg=<0 0>; #address-cells=<1>; #size-cells=<0>;
+            pon@800 { reg=<0x800>; };
+        };
+    };
+    spmi1: spmi@c450000 {
+        compatible="qcom,spmi-pmic-arb"; qcom,ee=<0>; qcom,bus-id=<1>;
+        reg=<0xc450000 0x1100>,<0xd600000 0x2000000>,<0xe800000 0x100000>;
+        reg-names="core","chnls","obsrvr"; #address-cells=<2>; #size-cells=<0>;
+        pmic@0 { reg=<0 0>; #address-cells=<1>; #size-cells=<0>;
+            pon@800 { reg=<0x800>; };
+        };
+    };
+};

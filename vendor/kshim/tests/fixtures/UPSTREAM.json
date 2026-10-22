@@ -1,0 +1,12 @@
+{
+  "andromeda-fdt.dtb": {
+    "source": "User-provided andromeda-fdt.dtb",
+    "sha256": "fe50c73156d08353967695a90f655f27274232e2585c1a3fb9a9fb06c045c5d7",
+    "size": 631836
+  },
+  "hdk8150-fdt.dtb": {
+    "source": "User-provided hdk8150-fdt.dtb",
+    "sha256": "ec54f9d8cfd1c65e9f3686bf2e725a8f382470518ddcee6065a27493bc212f66",
+    "size": 583613
+  }
+}

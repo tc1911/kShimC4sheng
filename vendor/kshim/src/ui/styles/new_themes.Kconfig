@@ -1,0 +1,31 @@
+# Additional choices inside KSHIM_MENU_STYLE; no external toolkits or brand assets.
+config KSHIM_MENU_STYLE_METRO
+    bool "METRO - typography-led Windows Phone inspired page"
+    help
+        Large left-aligned typography, an unframed black page, a distinct
+        selection mark and an outlined local action. No live tiles or fake apps.
+config KSHIM_MENU_STYLE_ONE_UI
+    bool "ONE_UI - portrait viewing and lower interaction areas"
+    help
+        Portrait viewing area above a continuous lower interaction surface,
+        leading icons and focus pill, with a wide Boot action. Long lists expand
+        upward; wide landscape screens use navigation/detail columns.
+        Focus movement never rearranges the controls or confirms a boot.
+config KSHIM_MENU_STYLE_ADWAITA
+    bool "ADWAITA - GNOME inspired boxed selection list"
+    help
+        Centered header bar, symbolic media marks, a continuous boxed list
+        and an independent suggested action. No GTK dependency or fake controls.
+config KSHIM_MENU_STYLE_HOLO
+    bool "HOLO - Android 4.x inspired dark action-bar list"
+    help
+        Flat dark surfaces, cyan action-bar rule, row separators and radio
+        selection marks. Uses the shared font and input/Boot state machine.
+
+config KSHIM_MENU_STYLE_LVGL_DEFAULT
+    bool "LVGL_DEFAULT - native LVGL default theme"
+    help
+        Use the pinned LVGL default theme with unmodified native list/buttons,
+        built-in primary/secondary colors, state feedback and default 14 px font.
+        CJK text uses the existing font only for missing-glyph fallback.
+        No custom theme decorations, textures, confirmation pulse or scaling.

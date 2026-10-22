@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kShimC · 真实主题渲染对照</title>
+<style>
+:root{color-scheme:dark;--bg:#0c1017;--panel:#141b25;--line:#2c3747;--text:#ecf0f7;--muted:#a6b3c4;--accent:#a7d6ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}button,input,select{font:inherit}button,select,input{min-height:42px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:inherit;padding:9px 12px}button,select{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}button:disabled{opacity:.45;cursor:default}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}code{font:12px ui-monospace,monospace;overflow-wrap:anywhere}header,main,footer{max-width:1660px;margin:auto;padding-inline:32px}.topline{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding:20px 0;gap:16px}.brand{font-size:18px;font-weight:750;letter-spacing:-.5px}.brand span{font-size:11px;letter-spacing:2px;color:var(--muted);margin-left:16px;font-weight:500}.tag{font-size:11px;letter-spacing:.6px;border:1px solid #426b59;background:#142b24;color:#abe3c1;padding:4px 9px;border-radius:5px}.intro{display:flex;align-items:end;justify-content:space-between;gap:24px;padding:26px 0 20px}h1{margin:0 0 6px;font-size:clamp(24px,3vw,34px);letter-spacing:-1px;line-height:1.3}.muted{color:var(--muted)}p{margin:4px 0}.stats{display:flex;gap:25px;text-align:right;flex-shrink:0}.stats strong{display:block;font-size:27px;line-height:1.2;font-weight:600}.stats span{font-size:11px;color:var(--muted)}.sources{font-size:12px;background:#111822;border:1px solid var(--line);padding:12px 14px;border-radius:8px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap;padding:22px 0 18px}.controls label{display:flex;flex-direction:column;gap:5px;color:var(--muted);font-size:11px}.controls label>*{color:var(--text);font-size:13px}#theme{min-width:190px}#search{width:170px}.spacer{flex:1}.titleline{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:6px 0 14px}h2{font-size:19px;margin:0}.detail{font-size:12px;color:var(--muted);margin-top:4px}.framegrid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.framegrid.single{grid-template-columns:1fr}figure{margin:0;min-width:0;background:#111721;border:1px solid var(--line);border-radius:10px;overflow:hidden}figcaption{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;gap:10px}figcaption strong{font-weight:600}.current{color:var(--accent)}.viewport{height:min(64vh,720px);min-height:200px;display:flex;align-items:center;justify-content:center;overflow:auto;background:#070a0f;padding:12px}.viewport img{display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}.pixels .viewport{display:block;padding:0}.pixels .viewport img{max-width:none;max-height:none}.hash{border-top:1px solid var(--line);color:var(--muted);font-size:10px;padding:8px 14px;overflow-wrap:anywhere}.notice{margin:14px 0 24px;font-size:12px;color:var(--muted);padding-left:12px;border-left:2px solid #415575}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:14px}.card{padding:0;overflow:hidden;text-align:left;background:#111721;min-width:0}.card img{display:block;width:100%;height:160px;object-fit:contain;background:#070a0f}.card div{padding:12px 14px}.card strong{font-size:13px;display:block}.card small{color:var(--muted);font-size:11px;display:block;margin-top:2px}.empty{padding:32px;color:var(--muted)}footer{margin-top:28px;padding-top:18px;padding-bottom:28px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}[hidden]{display:none!important}noscript{display:block;padding:24px;color:#ffc896}@media(max-width:840px){header,main,footer{padding-inline:16px}.intro{align-items:start;flex-direction:column;gap:14px}.stats{text-align:left;gap:30px}.stats strong{font-size:23px}.framegrid{grid-template-columns:1fr}.controls{gap:8px}#search,#theme{width:100%;min-width:0}.controls label{flex:1 1 140px}.spacer{display:none}.viewport{height:58vh}.titleline{align-items:start}.sources{display:block}.sources>div+div{margin-top:5px}.brand span{margin-left:10px}.grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}.card img{height:130px}.topline{padding:15px 0}}
+</style>
+</head>
+<body>
+<header>
+<div class="topline"><div class="brand">kShimC <span>THEME REVIEW</span></div><span class="tag">原始 LVGL 帧</span></div>
+<div class="intro"><div><h1>设计语言 · 真实渲染对照</h1><p class="muted">来自固件同源的主机端 LVGL 渲染，不是 CSS 复刻，也不是设备实拍。</p></div><div class="stats"><div><strong id="themeCount">—</strong><span>主题预设</span></div><div><strong id="frameCount">—</strong><span>原始关键帧</span></div><div><strong>2</strong><span>横 / 竖分辨率</span></div></div></div>
+<div class="sources"><div id="sourceNew"></div><div id="sourceOld"></div></div>
+</header>
+<main>
+<div class="controls">
+<label>搜索主题<input id="search" type="search" placeholder="Material、Clover…" aria-label="搜索主题"></label>
+<label>当前主题<select id="theme" aria-label="当前主题"></select></label>
+<label>分辨率<select id="size" aria-label="分辨率"></select></label>
+<label>渲染阶段<select id="stage" aria-label="渲染阶段"></select></label>
+<label>显示方式<select id="mode" aria-label="显示方式"><option value="both">旧版 / 新版对照</option><option value="new">只看新版</option><option value="old">只看旧版</option></select></label>
+<span class="spacer"></span><button id="pixel" aria-pressed="false">原始尺寸</button><button id="all" aria-pressed="false">全部主题</button>
+</div>
+<div class="titleline"><div><h2 id="currentTitle"></h2><div class="detail" id="description"></div></div><div class="detail" id="checks"></div></div>
+<div class="framegrid" id="frames">
+<figure id="oldFigure"><figcaption><strong>旧版 · 改造前</strong><a id="oldDownload">保存原始 PNG</a></figcaption><div class="viewport"><img id="oldImage" alt="旧版实际渲染"></div><div class="hash" id="oldHash"></div></figure>
+<figure id="newFigure"><figcaption><strong class="current">新版 · 改造后</strong><a id="newDownload">保存原始 PNG</a></figcaption><div class="viewport"><img id="newImage" alt="新版实际渲染"></div><div class="hash" id="newHash"></div></figure>
+</div>
+<div class="grid" id="grid" hidden></div><div class="empty" id="empty" hidden>没有匹配的主题。清除搜索可查看全部预设。</div>
+<div class="notice" id="notice">画面中的按钮不是网页控件。原生 LVGL 没有自定义入场动画；其确认帧显示真实按钮按住状态，释放后才确认。原始尺寸模式可滚动检查细节。</div>
+</main>
+<footer><p id="verification"></p><p>图片未换字体、未重绘、未重新编码。PNG 校验只能验证文件完整性；设计语言、真机帧率和完整无障碍表现仍需单独验收。</p><p id="legacy"></p></footer>
+<noscript>需要启用 JavaScript 切换图集。完整包也可直接打开 new/ 或 old/ 目录中的原始 PNG。</noscript>
+<script id="dataset" type="application/json">__DATA__</script>
+<script>
+'use strict';
+const D=JSON.parse(document.getElementById('dataset').textContent),$=id=>document.getElementById(id);
+const note={LVGL_DEFAULT:'原生 LVGL 默认主题、原生列表与按钮、默认 14 px 字体；中文仅作缺字回退',METRO:'文字主导的无框页面、严格对齐与独立线框操作',ONE_UI:'上方查看区 / 连续下置交互面；横屏导航详情双栏；左侧图标与短焦点标记',ADWAITA:'居中标题栏、单色介质符号与有界连续列表',HOLO:'Android 4.x 式平直操作栏、细分隔线与单选圆环',FLAT:'保留原始动态背景与菜单路径',CLASSIC:'方角固件窗口、标题带与紧凑操作',CARDS:'独立介质卡片与自适应网格',TERMINAL:'固定 ASCII 字宽、编号列与终端式状态',MINIMAL:'去外围面板、短行长与极简选择标记',HIGH_CONTRAST:'实色边界、非颜色选择标记与高对比',FLUENT:'中性分层、矩形控件与整高选择侧线',FLUENT_DARK:'旧 Fluent 结构的独立深色配色',FLUENT2:'小圆角、内缩短选择标记与局部主操作',FLUENT2_DARK:'Fluent 2 结构的深色分层',MATERIAL2:'连续单选列表、顶部层级与局部操作',MATERIAL2_DARK:'深灰抬升表面与低饱和强调',MATERIAL3:'色调容器、单选状态与独立胶囊按钮',SURFACE:'启动项导航 / 详情分栏与窄屏折叠',SURFACE_DARK:'Surface 分栏结构的独立深色层级',CUPERTINO:'macOS 启动磁盘式图标网格',IOS_HIG:'传统 iOS 大标题、内缩分组与尾部勾号',HARMONYOS:'统一介质图标、圆角卡片与选择状态',CLOVER:'横向图标启动带、所选名称与独立确认',GLASS:'缓存柔化背景、透射表面与高光轮廓',AURORA:'背景极光色域与安静的内容表面',SOFT_UI:'同色系表面、成对明暗边缘与凹凸反馈',BENTO:'稳定跨列网格，焦点不触发重排',NEON:'深色骨架、框角符号与局部焦点发光',NORD:'Polar Night / Snow Storm / Frost 颜色角色'};
+const phase={'entry-120ms':'入场 · 120ms','ready-400ms':'就绪 · 400ms','focus-130ms':'焦点过渡 · 130ms','confirm-90ms':'确认反馈 · 90ms'};
+let overview=false,pixel=false;
+function option(el,value,text){const o=document.createElement('option');o.value=value;o.textContent=text;el.append(o)}
+D.names.forEach(n=>option($('theme'),n,n));D.sizes.forEach(s=>option($('size'),s,s==='1920x1080'?'横屏 · 1920 × 1080':s==='1080x2340'?'竖屏 · 1080 × 2340':s));D.stages.forEach(s=>option($('stage'),s,phase[s]||s));
+$('theme').value=D.names.includes('MATERIAL3')?'MATERIAL3':D.names[0];$('stage').value='ready-400ms';
+const hasOld=!!D.images.old;
+if(!hasOld){Array.from($('mode').options).forEach(o=>{o.disabled=o.value!=='new'});$('mode').value='new';$('oldFigure').hidden=true}else if(window.innerWidth<840){$('mode').value='new'}
+$('themeCount').textContent=D.names.length;$('frameCount').textContent=D.summary.new_frames+D.summary.old_frames;
+$('sourceNew').textContent='渲染源码 · 新 '+D.summary.new_source;
+$('sourceOld').textContent=hasOld?'基线源码 · 旧 '+D.summary.old_source:'单版本数据 · 未载入旧版';
+$('verification').textContent='已核对 PNG 哈希 / CRC / 解码尺寸；新版原始 CTest 日志共 '+D.summary.new_tests_passed+' 次通过。';
+$('legacy').textContent=hasOld&&D.summary.old_source_kind==='supplied'?'旧版历史产物没有内嵌提交标记；基线提交由其对应 CI 来源指定，并保留原始 PNG 校验清单。':'';
+function key(name){return name+'|'+$('size').value+'|'+$('stage').value}
+function draw(version){if(!D.images[version])return;const k=key($('theme').value),uri=D.images[version][k],img=$(version+'Image'),link=$(version+'Download');img.src=uri;img.alt=$('theme').value+' · '+(version==='new'?'新版':'旧版')+' · '+$('size').value+' · '+$('stage').value;link.href=uri;link.download=$('theme').value+'-'+version+'-'+$('size').value+'-'+$('stage').value+'.png';$(version+'Hash').textContent='PNG SHA256 · '+D.meta[version][k]}
+function matches(){const q=$('search').value.trim().toUpperCase().replaceAll(' ','_');return D.names.filter(n=>n.includes(q))}
+function grid(){const root=$('grid');root.replaceChildren();const names=matches();$('empty').hidden=names.length>0;names.forEach(n=>{const b=document.createElement('button');b.className='card';const img=document.createElement('img');img.src=D.images.new[key(n)];img.alt=n+' 新版实际渲染';img.loading='lazy';const text=document.createElement('div'),strong=document.createElement('strong'),small=document.createElement('small');strong.textContent=n;small.textContent=note[n]||'';text.append(strong,small);b.append(img,text);b.onclick=()=>{$('theme').value=n;overview=false;toggle();render()};root.append(b)});$('currentTitle').textContent='新版主题总览 · '+names.length;$('description').textContent=$('size').selectedOptions[0].textContent+' / '+(phase[$('stage').value]||$('stage').value)}
+function render(){draw('new');draw('old');$('oldFigure').hidden=$('mode').value==='new'||!hasOld;$('newFigure').hidden=$('mode').value==='old';$('frames').classList.toggle('single',$('mode').value!=='both');$('currentTitle').textContent=$('theme').value;$('description').textContent=note[$('theme').value]||'';$('checks').textContent=D.summary.flat_matches===null?'尚未执行旧版像素对照':'FLAT '+D.summary.flat_matches+'/'+D.summary.flat_matches+' 原始像素一致';if(overview)grid()}
+function toggle(){$('frames').hidden=overview;$('grid').hidden=!overview;$('empty').hidden=true;$('all').textContent=overview?'返回预览':'全部主题';$('all').setAttribute('aria-pressed',String(overview));if(overview)grid()}
+['theme','size','stage','mode'].forEach(id=>$(id).onchange=render);
+$('pixel').onclick=()=>{pixel=!pixel;document.body.classList.toggle('pixels',pixel);$('pixel').textContent=pixel?'适应窗口':'原始尺寸';$('pixel').setAttribute('aria-pressed',String(pixel))};
+$('all').onclick=()=>{overview=!overview;toggle();render()};
+$('search').oninput=()=>{if(overview){grid();return}const found=matches();if(found.length){$('theme').value=found[0];$('empty').hidden=true;render()}else{overview=true;toggle();render()}};
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+#if defined(__LD_SCRIPT__) || defined(__ASSEMBLER__)
+#define ULL_NUM(x) x
+#else
+#define ULL_NUM(x) (x##ULL)
+#endif
+
+#ifndef KSHIM_LINK_ADDRESS
+#define KSHIM_LINK_ADDRESS ULL_NUM(0x40200000)
+#endif
+#define LD_START_ADDRESS KSHIM_LINK_ADDRESS
+#ifndef KSHIM_RUNTIME_SLOT_SIZE
+#define KSHIM_RUNTIME_SLOT_SIZE ULL_NUM(0x400000)
+#endif
+#define LD_IMAGE_SIZE KSHIM_RUNTIME_SLOT_SIZE
+#define LD_STACK_SIZE ULL_NUM(0x40000)

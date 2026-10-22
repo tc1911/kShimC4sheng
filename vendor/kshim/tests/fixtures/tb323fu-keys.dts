@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT
+/*
+ * Minimal test fixture (NOT a bootable device tree).
+ * Source: offline TB323FU, selected stock DTB12 + DTBO47.
+ * Purpose: compile-only fixture for remote Docker build; source retained on NAS.
+ * Contains only the exact data provided; no inferred hardware.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	arbiter@c400000 {
+		compatible = "qcom,canoe-spmi-pmic-arb";
+		reg = <0 0xc400000 0 0x3000>,
+		      <0 0xc900000 0 0x400000>,
+		      <0 0xc4c0000 0 0x400000>,
+		      <0 0xc403000 0 0x8000>;
+		reg-names = "core", "chnls", "obsrvr", "chnl_map";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		qcom,ee = <0>;
+		qcom,channel = <0>;
+
+		spmi@c426000 {
+			reg = <0 0xc426000 0 0x4000>,
+			      <0 0xc8c0000 0 0x10000>,
+			      <0 0xc42a000 0 0x8000>;
+			reg-names = "cnfg", "intr", "chnl_owner";
+			#address-cells = <2>;
+			#size-cells = <0>;
+
+			pmk8850@0 {
+				compatible = "qcom,spmi-pmic";
+				reg = <0 0>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				pon_hlos@1300 {
+					compatible = "qcom,pmk8350-pon";
+					reg = <0x1300 0x800>;
+					reg-names = "hlos", "pbs";
+
+					pwrkey {
+						compatible = "qcom,pmk8350-pwrkey";
+						linux,code = <116>;
+					};
+
+					resin {
+						compatible = "qcom,pmk8350-resin";
+						linux,code = <114>;
+					};
+				};
+			};
+		};
+	};
+
+	tlmm: pinctrl@f000000 {
+		compatible = "qcom,canoe-tlmm";
+		reg = <0 0xf000000 0 0x202000>;
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+
+		vol_up {
+			gpios = <&tlmm 101 1>;
+			linux,code = <115>;
+		};
+	};
+};

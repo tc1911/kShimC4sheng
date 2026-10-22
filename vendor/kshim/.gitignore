@@ -1,0 +1,10 @@
+.venv/
+.vscode/
+.cache/
+__pycache__/
+*.py[cod]
+
+build/
+CMakeFiles
+Image
+compile_commands.json

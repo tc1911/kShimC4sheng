@@ -1,0 +1,33 @@
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		splash: cont_splash_region@fc800000 {
+			reg = <0 0xfc800000 0 0x2b00000>;
+		};
+	};
+
+	sde: sde@9800000 {
+		compatible = "qcom,sde-kms";
+		qcom,sde-hw-version = <0xd0000000>;
+		reg-names = "mdp_phys";
+		reg = <0 0x9800000 0 0x1c8800>;
+
+		qcom,sde-sspp-off = <0x2c000 0x35000 0x3e000 0x47000 0x98000 0xa1000 0xaa000 0xb3000 0xbc000 0xc5000>;
+		qcom,sde-sspp-type = "vig", "vig", "vig", "vig", "dma", "dma", "dma", "dma", "dma", "dma";
+
+		qcom,sde-ctl-off = <0x20000 0x21000 0x22000 0x23000 0x24000 0x25000>;
+
+		qcom,sde-mixer-off = <0x104000 0x10c000 0x114000 0x11c000 0x124000 0x12c000 0x134000 0x13c000 0xf0f 0xf0f 0xf0f 0xf0f>;
+
+		qcom,sde-mixer-blendstages = <11>;
+		qcom,sde-mixer-blend-op-off = <0x40 0x70 0xa0 0xd0 0x100 0x130 0x160 0x190 0x1c0 0x1f0 0x220>;
+	};
+};

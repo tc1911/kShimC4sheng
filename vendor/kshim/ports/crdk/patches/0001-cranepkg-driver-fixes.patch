@@ -1,0 +1,3741 @@
+diff --git a/CranePkg.dec b/CranePkg.dec
+index 7441cc5..4955d33 100644
+--- a/CranePkg.dec
++++ b/CranePkg.dec
+@@ -31,6 +31,8 @@
+   gEfiGpiCrProtocolGuid       = { 0x9f2f4a76, 0x5c8e, 0x4a0e, { 0x91, 0x43, 0x2b, 0x70, 0x8c, 0x6d, 0x4e, 0x12 } }
+   gEfiI2cCrProtocolGuid       = { 0x6f1a3d94, 0x2b5c, 0x4f06, { 0xa8, 0x7b, 0x39, 0xd2, 0x0e, 0x64, 0x5c, 0x28 } }
+   gEfiSpiCrProtocolGuid       = { 0x3c7e91b5, 0x84d2, 0x4a69, { 0xb0, 0x2f, 0x76, 0x15, 0xc8, 0x43, 0x9a, 0x0d } }
++  gEfiMdpDsiProtocolGuid      = { 0x7c3e2f4a, 0x5c01, 0x4f16, { 0x9a, 0x57, 0x31, 0x8c, 0x72, 0x0d, 0x55, 0x90 } }
++  gEfiLt9611CrProtocolGuid    = { 0x4aa85bcd, 0xb1a0, 0x4df0, { 0x9f, 0x04, 0xc8, 0x91, 0xf4, 0x8f, 0x8b, 0xc1 } }
+   # MU QUP/GENI private protocols consumed by the Crane adapters.
+   gQcomI2CProtocolGuid        = { 0xb27ae8b1, 0x3e10, 0x4d07, { 0xab, 0x5c, 0xeb, 0x9a, 0x6d, 0xc6, 0xfa, 0x8f } }
+   gQcomSPIProtocolGuid        = { 0x4c7ffd28, 0x6a06, 0x4425, { 0x9e, 0xe2, 0x67, 0x6e, 0xbc, 0x08, 0x96, 0x83 } }
+diff --git a/Driver/ClockCrDxe/ClockCrDxe.c b/Driver/ClockCrDxe/ClockCrDxe.c
+index a9c67d7..a00f0bd 100644
+--- a/Driver/ClockCrDxe/ClockCrDxe.c
++++ b/Driver/ClockCrDxe/ClockCrDxe.c
+@@ -125,6 +125,9 @@ ProtocolSetClock (
+              &Flags
+              );
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: resolve clock %a/%a failed: %r\n",
++            Controller, Id, Status));
+     return Status;
+   }
+   if ((RateHz > MAX_UINT32) &&
+@@ -133,6 +136,9 @@ ProtocolSetClock (
+   }
+   Status = mNativeClock->GetClockID (mNativeClock, NativeName, &NativeId);
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: GetClockID %a/%a -> %a failed: %r\n",
++            Controller, Id, NativeName, Status));
+     return Status;
+   }
+ 
+@@ -176,6 +182,10 @@ ProtocolSetClock (
+     if (!EFI_ERROR (Status)) {
+       Vote->References = 0;
+       Vote->RateHz = 0;
++    } else {
++      DEBUG ((DEBUG_ERROR,
++              "ClockCrDxe: DisableClock %a/%a (id=0x%lx) failed: %r\n",
++              Controller, Id, NativeId, Status));
+     }
+     EfiReleaseLock (&mVoteLock);
+     return Status;
+@@ -215,6 +225,10 @@ ProtocolSetClock (
+                              &ResultRate
+                              );
+     if (EFI_ERROR (Status)) {
++      DEBUG ((DEBUG_ERROR,
++              "ClockCrDxe: SetClockFreqHz %a/%a (native=%a id=0x%lx rate=%u) failed: %r\n",
++              Controller, Id, NativeName, NativeId,
++              (UINT32)RateHz, Status));
+       EfiReleaseLock (&mVoteLock);
+       return Status;
+     }
+@@ -235,6 +249,9 @@ ProtocolSetClock (
+                              0
+                              );
+     if (EFI_ERROR (Status)) {
++      DEBUG ((DEBUG_ERROR,
++              "ClockCrDxe: SelectExternalSource %a/%a (native=%a id=0x%lx) failed: %r\n",
++              Controller, Id, NativeName, NativeId, Status));
+       EfiReleaseLock (&mVoteLock);
+       return Status;
+     }
+@@ -245,12 +262,18 @@ ProtocolSetClock (
+                            &WasEnabled
+                            );
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: IsClockEnabled %a/%a (native=%a id=0x%lx) failed: %r\n",
++            Controller, Id, NativeName, NativeId, Status));
+     EfiReleaseLock (&mVoteLock);
+     return Status;
+   }
+ 
+   EnableStatus = mNativeClock->EnableClock (mNativeClock, NativeId);
+   if (EFI_ERROR (EnableStatus)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: EnableClock %a/%a (native=%a id=0x%lx) failed: %r\n",
++            Controller, Id, NativeName, NativeId, EnableStatus));
+     Status = mNativeClock->IsClockEnabled (
+                              mNativeClock,
+                              NativeId,
+@@ -314,6 +337,9 @@ ProtocolSetGdsc (
+              &Flags
+              );
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: resolve GDSC %a/%a failed: %r\n",
++            Controller, Id, Status));
+     return Status;
+   }
+   Status = mNativeClock->GetClockPowerDomainID (
+@@ -322,6 +348,9 @@ ProtocolSetGdsc (
+                            &NativeId
+                            );
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: GetClockPowerDomainID %a/%a -> %a failed: %r\n",
++            Controller, Id, NativeName, Status));
+     return Status;
+   }
+ 
+@@ -345,6 +374,10 @@ ProtocolSetGdsc (
+     Status = mNativeClock->DisableClockPowerDomain (mNativeClock, NativeId);
+     if (!EFI_ERROR (Status)) {
+       Vote->References = 0;
++    } else {
++      DEBUG ((DEBUG_ERROR,
++              "ClockCrDxe: DisableClockPowerDomain %a/%a (native=%a id=0x%lx) failed: %r\n",
++              Controller, Id, NativeName, NativeId, Status));
+     }
+     EfiReleaseLock (&mVoteLock);
+     return Status;
+@@ -365,6 +398,9 @@ ProtocolSetGdsc (
+   }
+   Status = mNativeClock->EnableClockPowerDomain (mNativeClock, NativeId);
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: EnableClockPowerDomain %a/%a (native=%a id=0x%lx) failed: %r\n",
++            Controller, Id, NativeName, NativeId, Status));
+     EfiReleaseLock (&mVoteLock);
+     return Status;
+   }
+@@ -408,10 +444,16 @@ ProtocolSetReset (
+              &Flags
+              );
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: resolve reset %a/%a failed: %r\n",
++            Controller, Id, Status));
+     return Status;
+   }
+   Status = mNativeClock->GetClockID (mNativeClock, NativeName, &NativeId);
+   if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: GetClockID reset %a/%a -> %a failed: %r\n",
++            Controller, Id, NativeName, Status));
+     return Status;
+   }
+   EfiAcquireLock (&mVoteLock);
+@@ -420,6 +462,116 @@ ProtocolSetReset (
+                            NativeId,
+                            Assert ? EfiClockResetAssert : EfiClockResetDeassert
+                            );
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++            "ClockCrDxe: ResetClock %a/%a -> %a (id=0x%lx assert=%u) failed: %r\n",
++            Controller, Id, NativeName, NativeId, Assert, Status));
++  }
++  EfiReleaseLock (&mVoteLock);
++  return Status;
++}
++
++STATIC
++EFI_STATUS
++EFIAPI
++ProtocolConfigureExternalSource (
++  IN EFI_CLOCK_CR_PROTOCOL *This,
++  IN CONST CHAR8           *Controller,
++  IN CONST CHAR8           *Id,
++  IN UINT32                 RateHz,
++  IN UINT32                 Source,
++  IN UINT32                 Divider,
++  IN UINT32                 M,
++  IN UINT32                 N,
++  IN UINT32                 TwiceD
++  )
++{
++  CONST CHAR8   *NativeName;
++  CLOCK_CR_VOTE *Vote;
++  EFI_STATUS     Status;
++  UINT32         Flags;
++  UINTN          NativeId;
++  BOOLEAN        Enabled;
++
++  if ((This == NULL) || (Controller == NULL) || (Id == NULL) ||
++      (Divider == 0)) {
++    return EFI_INVALID_PARAMETER;
++  }
++  if (mNativeClock == NULL) {
++    return EFI_NOT_READY;
++  }
++  Status = ResolveNativeResource (Controller, Id, CrDalClockResourceClock,
++                                  &NativeName, &Flags);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++  Status = mNativeClock->GetClockID (mNativeClock, NativeName, &NativeId);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++  EfiAcquireLock (&mVoteLock);
++  Vote = FindVote (mClockVotes, CLOCK_CR_MAX_CLOCK_VOTES, NativeId, FALSE);
++  if ((Vote != NULL) && (Vote->References != 0)) {
++    EfiReleaseLock (&mVoteLock);
++    return EFI_ACCESS_DENIED;
++  }
++  Status = mNativeClock->IsClockEnabled (mNativeClock, NativeId, &Enabled);
++  if (!EFI_ERROR (Status) && Enabled) {
++    Status = EFI_ACCESS_DENIED;
++  } else if (!EFI_ERROR (Status)) {
++    Status = mNativeClock->SelectExternalSource (
++                             mNativeClock, NativeId, RateHz, Source, Divider,
++                             M, N, TwiceD);
++  }
++  EfiReleaseLock (&mVoteLock);
++  return Status;
++}
++
++STATIC
++EFI_STATUS
++EFIAPI
++ProtocolSetDivider (
++  IN EFI_CLOCK_CR_PROTOCOL *This,
++  IN CONST CHAR8           *Controller,
++  IN CONST CHAR8           *Id,
++  IN UINT32                 Divider
++  )
++{
++  CONST CHAR8   *NativeName;
++  CLOCK_CR_VOTE *Vote;
++  EFI_STATUS     Status;
++  UINT32         Flags;
++  UINTN          NativeId;
++  BOOLEAN        Enabled;
++
++  if ((This == NULL) || (Controller == NULL) || (Id == NULL) ||
++      (Divider == 0)) {
++    return EFI_INVALID_PARAMETER;
++  }
++  if (mNativeClock == NULL) {
++    return EFI_NOT_READY;
++  }
++  Status = ResolveNativeResource (Controller, Id, CrDalClockResourceClock,
++                                  &NativeName, &Flags);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++  Status = mNativeClock->GetClockID (mNativeClock, NativeName, &NativeId);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++  EfiAcquireLock (&mVoteLock);
++  Vote = FindVote (mClockVotes, CLOCK_CR_MAX_CLOCK_VOTES, NativeId, FALSE);
++  if ((Vote != NULL) && (Vote->References != 0)) {
++    EfiReleaseLock (&mVoteLock);
++    return EFI_ACCESS_DENIED;
++  }
++  Status = mNativeClock->IsClockEnabled (mNativeClock, NativeId, &Enabled);
++  if (!EFI_ERROR (Status) && Enabled) {
++    Status = EFI_ACCESS_DENIED;
++  } else if (!EFI_ERROR (Status)) {
++    Status = mNativeClock->SetClockDivider (mNativeClock, NativeId, Divider);
++  }
+   EfiReleaseLock (&mVoteLock);
+   return Status;
+ }
+@@ -429,6 +581,8 @@ STATIC EFI_CLOCK_CR_PROTOCOL mClockCrProtocol = {
+   .SetClock = ProtocolSetClock,
+   .SetGdsc  = ProtocolSetGdsc,
+   .SetReset = ProtocolSetReset,
++  .ConfigureExternalSource = ProtocolConfigureExternalSource,
++  .SetDivider = ProtocolSetDivider,
+ };
+ 
+ EFI_STATUS
+@@ -458,6 +612,7 @@ ClockEntryPoint (
+       (mNativeClock->IsClockEnabled == NULL) ||
+       (mNativeClock->SetClockFreqHz == NULL) ||
+       (mNativeClock->SelectExternalSource == NULL) ||
++      (mNativeClock->SetClockDivider == NULL) ||
+       (mNativeClock->GetClockPowerDomainID == NULL) ||
+       (mNativeClock->EnableClockPowerDomain == NULL) ||
+       (mNativeClock->DisableClockPowerDomain == NULL) ||
+diff --git a/Driver/GpiCrDxe/GpiCrDxe.c b/Driver/GpiCrDxe/GpiCrDxe.c
+index b183473..7c77cfb 100644
+--- a/Driver/GpiCrDxe/GpiCrDxe.c
++++ b/Driver/GpiCrDxe/GpiCrDxe.c
+@@ -1,127 +1,890 @@
+ /** @file
+- *  GPI DMA target-resource protocol producer.
++ *  Linux-compatible Qualcomm GPI-DMA I2C transport.
+  *
+- *  MU's GpiDxe owns the DMA engine.  This driver only publishes the Linux
+- *  SM8450 base/IRQ/channel/SID metadata and refuses to start without QUP
+- *  readiness, so it cannot accidentally become a second DMA owner.
++ *  This driver owns GPI instance 1 and GENI SE9 (Linux i2c9).  The register
++ *  layout and TRE encoding follow Linux qcom/gpi.c and qcom-geni-i2c.c.  No
++ *  private MU protocol or prebuilt GPI implementation is used.
+  *
+  *  SPDX-License-Identifier: MIT
+  */
+ 
+ #include <Uefi.h>
+-
++#include <Base.h>
++#include <Library/BaseMemoryLib.h>
++#include <Library/CacheMaintenanceLib.h>
++#include <Library/DebugLib.h>
++#include <Library/IoLib.h>
++#include <Library/MemoryAllocationLib.h>
++#include <Library/SynchronizationLib.h>
++#include <Library/TimerLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/UefiDriverEntryPoint.h>
++#include <Library/UefiLib.h>
++#include <Protocol/IoMmu.h>
+ 
+ #include <Library/CrDalLib.h>
++#include <Protocol/EFIClockCrProtocol.h>
+ #include <Protocol/EFIGpiCrProtocol.h>
+-#include <Protocol/EFIMuBusProtocol.h>
++#include <Protocol/EFIGpioCrProtocol.h>
+ #include <Protocol/EFIQupCrProtocol.h>
++#include <Protocol/EFISmmuCrProtocol.h>
++
++#define GPI_CONTROLLER_ID              1U
++#define GPII_ID                        1U
++#define GPI_I2C_INSTANCE               10U
++#define GPI_SE_INDEX                   1U
++#define GPI_SEID                       1U
++#define SE_GENI_FW_REVISION_RO         0x068U
++#define GPI_I2C_PROTOCOL               3U /* QCOM_GPI_I2C */
++#define GPI_SID                        0x56U
++#define GPI_EE_OFFSET                  0x10000U /* sm8450 match-data offset */
++#define GPI_TX_CH                      0U
++#define GPI_RX_CH                      1U
++#define GPI_RING_ELEMENTS              64U
++#define GPI_EVENT_ELEMENTS             256U /* Linux CHAN_TRES << EV_FACTOR */
++#define GPI_EL_SIZE                    16U
++#define GPI_CMD_TIMEOUT_US             250000U
++#define GPI_XFER_TIMEOUT_US            500000U
++
++#define GPI_TRE_DMA                    0x10U
++#define GPI_TRE_GO                     0x20U
++#define GPI_TRE_CONFIG0                0x22U
++#define GPI_FLAG_CHAIN                 BIT (0)
++#define GPI_FLAG_IEOB                  BIT (8)
++#define GPI_FLAG_IEOT                  BIT (9)
++#define GPI_FLAG_BEI                   BIT (10)
++#define GPI_FLAG_LINK                  BIT (11)
++#define GPI_TYPE(_Type)                ((_Type) << 16)
++#define GPI_C0_CLK_DIV                 2U
++
++#define GPI_CH_CTX(_N, _K)             (0x20000U + 0x4000U * (_N) + 0x80U * (_K))
++#define GPI_EV_CTX(_N)                 (0x21000U + 0x4000U * (_N))
++#define GPI_CH_DB(_N, _K)              (0x22000U + 0x4000U * (_N) + 0x8U * (_K))
++#define GPI_EV_DB(_N)                  (0x22100U + 0x4000U * (_N))
++#define GPI_CH_CMD(_N)                 (0x23008U + 0x4000U * (_N))
++#define GPI_EV_CMD(_N)                 (0x23010U + 0x4000U * (_N))
++#define GPI_CH_CTRL_STATUS(_N)         (0x23090U + 0x4000U * (_N))
++#define GPI_EV_CTRL_STATUS(_N)         (0x23094U + 0x4000U * (_N))
++#define GPI_CH_CTRL_CLEAR(_N)          (0x230A0U + 0x4000U * (_N))
++#define GPI_EV_CTRL_CLEAR(_N)          (0x230A4U + 0x4000U * (_N))
++#define GPI_CH_SCRATCH(_N, _K, _W)     (0x20060U + 0x4000U * (_N) + 0x80U * (_K) + 4U * (_W))
++#define GPI_CH_QOS(_N, _K)             (0x2005cU + 0x4000U * (_N) + 0x80U * (_K))
++
++#define GPI_CONFIG                     0x00U
++#define GPI_LENGTH                     0x04U
++#define GPI_RING_BASE_L                0x08U
++#define GPI_RING_BASE_H                0x0cU
++#define GPI_RING_RP_L                  0x10U
++#define GPI_RING_RP_H                  0x14U
++#define GPI_RING_WP_L                  0x18U
++#define GPI_RING_WP_H                  0x1cU
++#define GPI_INT_MOD                    0x20U
++#define GPI_MSI_L                      0x28U
++#define GPI_MSI_H                      0x2cU
++#define GPI_RP_UPDATE_L                0x30U
++#define GPI_RP_UPDATE_H                0x34U
++#define GPI_STATE(_V)                  (((_V) >> 20) & 0xfU)
++#define GPI_CH_ALLOCATED               1U
++#define GPI_CH_STARTED                 2U
++
++#define SE_GENI_STATUS                 0x040U
++#define SE_M_CMD_CTRL                  0x604U
++#define SE_M_IRQ_STATUS                0x610U
++#define SE_M_CMD_ABORT                 BIT (5)
++#define SE_M_IRQ_EN                    0x614U
++#define SE_M_IRQ_CLEAR                 0x618U
++#define SE_M_GP_LENGTH                 0x910U
++#define SE_S_IRQ_CLEAR                 0x648U
++#define SE_DMA_MODE                    0x258U
++#define SE_DMA_TX_IRQ_CLEAR            0xC44U
++#define SE_DMA_RX_IRQ_CLEAR            0xD44U
++#define SE_GSI_EVENT_EN                0xe18U
++#define SE_IRQ_EN                      0xe1cU
++#define SE_DMA_GENERAL_CFG             0xe30U
++#define SE_CGC_CTRL                    0x28U
++#define SE_OUTPUT_CTRL                 0x24U
++#define SE_FORCE_DEFAULT               0x20U
++#define SE_CLK_SEL                     0x7cU
++#define SE_SER_M_CLK_CFG              0x48U
++#define SE_I2C_SCL_COUNTERS           0x278U
++#define SE_DMA_MODE_EN                 BIT (0)
++#define SE_M_CMD_DONE_EN               BIT (0)
++#define SE_M_TX_FIFO_WATERMARK_EN      BIT (30)
++#define SE_M_RX_FIFO_WATERMARK_EN      BIT (26)
++#define SE_M_RX_FIFO_LAST_EN           BIT (27)
++#define SE_DEFAULT_CGC_EN              0x7fU
++#define SE_DMA_GENERAL_CLK_EN          0x0fU
++
++#define GPI_EVENT_XFER_COMPLETE        0x22U
++#define GPI_EVENT_QUP_NOTIFY           0x31U
++#define GPI_NOTIFY_I2C_ERROR_MASK      (BIT (10) | BIT (12) | BIT (13))
++#define GPI_TCE_I2C_ERROR_MASK         (BIT (6) | BIT (8) | BIT (9))
++#define GPI_EVENT_SUCCESS              1U
++#define GPI_EVENT_EOT                  2U
++#define GPI_EVENT_EOB                  4U
++#define GPI_EVENT_ERROR                16U
++
++typedef struct {
++  VOID                 *Host;
++  EFI_PHYSICAL_ADDRESS Device;
++  VOID                 *Mapping;
++  UINTN                Pages;
++  UINT32               Length;
++  UINT32               ElSize;
++  UINT32               ReadOffset;
++  UINT32               DoorbellOffset;
++} GPI_RING;
++
++typedef struct {
++  VOID                 *Host;
++  EFI_PHYSICAL_ADDRESS Device;
++  VOID                 *Mapping;
++  UINTN                Pages;
++} GPI_BUFFER;
+ 
+-STATIC CONST CR_TARGET_QUP_CONTEXT *mGpiContext;
+-STATIC MU_GPI_PROTOCOL               *mMuGpi;
++typedef struct {
++  EFI_GPI_CR_PROTOCOL              Protocol;
++  EFI_QUP_CR_PROTOCOL              *Qup;
++  EFI_CLOCK_CR_PROTOCOL            *Clock;
++  EFI_SMMU_CR_PROTOCOL             *Smmu;
++  EDKII_IOMMU_PROTOCOL             *Iommu;
++  CONST CR_TARGET_GPI_CONTROLLER   *Controller;
++  UINTN                            GpiBase;
++  UINTN                            SeBase;
++  GPI_RING                         TxRing;
++  GPI_RING                         RxRing;
++  GPI_RING                         EventRing;
++  GPI_BUFFER                       Data;
++  BOOLEAN                          SeReady;
++  BOOLEAN                          CommandFailed;
++  BOOLEAN                          EventTouched;
++  BOOLEAN                          ChannelTouched[2];
++  BOOLEAN                          Initialized;
++  BOOLEAN                          HaveQuiesced;
++  BOOLEAN                          DmaCleanupFailed;
++} GPI_STATE;
++
++STATIC GPI_STATE mGpi;
+ 
+ STATIC EFI_STATUS
+-EFIAPI
+-GpiGetController (
+-  IN  EFI_GPI_CR_PROTOCOL               *This,
+-  IN  UINT8                              ControllerId,
+-  OUT CONST CR_TARGET_GPI_CONTROLLER **Controller
+-  )
++GpiConfigurePins (VOID)
+ {
+-  UINTN Index;
++  EFI_GPIO_CR_PROTOCOL *Gpio;
++  EFI_STATUS            Status;
++  UINTN                 Index;
+ 
+-  (VOID)This;
+-  if ((Controller == NULL) || (mGpiContext == NULL)) {
+-    return EFI_INVALID_PARAMETER;
++  Gpio = NULL;
++  Status = gBS->LocateProtocol (&gEfiGpioCrProtocolGuid, NULL, (VOID **)&Gpio);
++  if (EFI_ERROR (Status) || (Gpio == NULL) || (Gpio->ConfigGpio == NULL)) {
++    DEBUG ((DEBUG_WARN, "GPI: GPIO pinmux protocol unavailable: %r\n", Status));
++    return EFI_ERROR (Status) ? Status : EFI_NOT_READY;
+   }
++  /* Linux sm8450 GPIO32/33 PINGROUP lists qup9 as function 1. */
++  for (Index = 0; Index < 2; ++Index) {
++    GpioConfigParams Config;
++    ZeroMem (&Config, sizeof (Config));
++    Config.PinNumber = (UINT16)(32U + Index);
++    Config.OutputEnable = FALSE;
++    Config.FunctionSel = GPIO_FUNC_1;
++    Config.Pull = GPIO_PULL_UP;
++    Config.DriveStrength = GPIO_DRIVE_STRENGTH_UNCHANGE;
++    Config.OutputValue = GPIO_VALUE_UNCHANGE;
++    Status = Gpio->ConfigGpio (Gpio, &Config);
++    if (EFI_ERROR (Status)) {
++      DEBUG ((DEBUG_WARN, "GPI: GPIO%u pinmux failed: %r\n", Config.PinNumber, Status));
++      return Status;
++    }
++  }
++  return EFI_SUCCESS;
++}
+ 
+-  *Controller = NULL;
+-  for (Index = 0; Index < mGpiContext->GpiCount; ++Index) {
+-    if (mGpiContext->Gpi[Index].Id == ControllerId) {
+-      *Controller = &mGpiContext->Gpi[Index];
+-      return EFI_SUCCESS;
++STATIC UINT32 GpiRead (IN UINTN Offset) { return MmioRead32 (mGpi.GpiBase + Offset); }
++STATIC VOID GpiWrite (IN UINTN Offset, IN UINT32 Value) { MmioWrite32 (mGpi.GpiBase + Offset, Value); }
++STATIC UINT32 GpiSeRead (IN UINTN Offset) { return MmioRead32 (mGpi.SeBase + Offset); }
++STATIC VOID GpiSeWrite (IN UINTN Offset, IN UINT32 Value) { MmioWrite32 (mGpi.SeBase + Offset, Value); }
++
++/* Do not return pages to the allocator while a failed Unmap may leave an
++   SMMU translation live.  Retain the descriptor for diagnosis and fence
++   initialization so a retry cannot overwrite the retained ownership. */
++STATIC VOID
++GpiDmaFree (IN OUT GPI_BUFFER *Buffer)
++{
++  EFI_STATUS Status;
++  if ((Buffer == NULL) || (Buffer->Host == NULL) || (mGpi.Iommu == NULL)) return;
++  if (Buffer->Mapping != NULL) {
++    Status = mGpi.Iommu->Unmap (mGpi.Iommu, Buffer->Mapping);
++    if (EFI_ERROR (Status)) {
++      mGpi.DmaCleanupFailed = TRUE;
++      return;
+     }
++    Buffer->Mapping = NULL;
+   }
+-  return EFI_NOT_FOUND;
++  Status = mGpi.Iommu->FreeBuffer (mGpi.Iommu, Buffer->Pages, Buffer->Host);
++  if (EFI_ERROR (Status)) {
++    mGpi.DmaCleanupFailed = TRUE;
++    return;
++  }
++  ZeroMem (Buffer, sizeof (*Buffer));
+ }
+ 
+ STATIC EFI_STATUS
+-EFIAPI
+-GpiGetContext (
+-  IN  EFI_GPI_CR_PROTOCOL       *This,
+-  OUT CONST CR_TARGET_QUP_CONTEXT **Context
+-  )
++GpiDmaAllocate (IN UINTN Pages, OUT GPI_BUFFER *Buffer)
+ {
+-  (VOID)This;
+-  if ((Context == NULL) || (mGpiContext == NULL)) {
+-    return EFI_INVALID_PARAMETER;
++  EFI_STATUS Status;
++  UINTN      Bytes;
++
++  if ((Buffer == NULL) || (Pages == 0) || (Pages > MAX_UINTN / EFI_PAGE_SIZE) ||
++      (mGpi.Iommu == NULL) ||
++      (mGpi.Iommu->AllocateBuffer == NULL) || (mGpi.Iommu->Map == NULL) ||
++      (mGpi.Iommu->Unmap == NULL) || (mGpi.Iommu->FreeBuffer == NULL) ||
++      (mGpi.Iommu->SetAttributeById == NULL)) {
++    return EFI_UNSUPPORTED;
++  }
++  if (mGpi.DmaCleanupFailed) return EFI_DEVICE_ERROR;
++  ZeroMem (Buffer, sizeof (*Buffer));
++  Status = mGpi.Iommu->AllocateBuffer (
++      mGpi.Iommu, AllocateAnyPages, EfiBootServicesData, Pages, &Buffer->Host, 0);
++  if (EFI_ERROR (Status)) return Status;
++  Buffer->Pages = Pages;
++  Bytes = Pages * EFI_PAGE_SIZE;
++  Status = mGpi.Iommu->Map (mGpi.Iommu,
++      EdkiiIoMmuOperationBusMasterCommonBuffer64, Buffer->Host, &Bytes,
++      &Buffer->Device, &Buffer->Mapping);
++  if (EFI_ERROR (Status)) {
++    /* Map outputs are not valid on failure. */
++    Buffer->Mapping = NULL;
++    GpiDmaFree (Buffer);
++    return Status;
++  }
++  if (Bytes != Pages * EFI_PAGE_SIZE) {
++    GpiDmaFree (Buffer);
++    return EFI_BAD_BUFFER_SIZE;
++  }
++  Status = mGpi.Iommu->SetAttributeById (
++      mGpi.Iommu, 0x15000000ULL, GPI_SID, Buffer->Mapping,
++      EDKII_IOMMU_ACCESS_READ | EDKII_IOMMU_ACCESS_WRITE);
++  if (EFI_ERROR (Status)) {
++    GpiDmaFree (Buffer);
++    return Status;
+   }
+-  *Context = mGpiContext;
+   return EFI_SUCCESS;
+ }
+ 
+ STATIC EFI_STATUS
+-EFIAPI
+-GpiGetMuProtocol (
+-  IN  EFI_GPI_CR_PROTOCOL *This,
+-  OUT MU_GPI_PROTOCOL     **Protocol
+-  )
++GpiRingAllocate (IN UINT32 Elements, OUT GPI_RING *Ring)
+ {
+-  (VOID)This;
+-  if (Protocol == NULL) {
+-    return EFI_INVALID_PARAMETER;
++  EFI_STATUS Status;
++  GPI_BUFFER Buffer = {0};
++  UINTN Pages;
++
++  if (Ring == NULL) return EFI_INVALID_PARAMETER;
++  ZeroMem (Ring, sizeof (*Ring));
++  Ring->ElSize = GPI_EL_SIZE;
++  Ring->Length = Elements * GPI_EL_SIZE;
++  Pages = (Ring->Length + EFI_PAGE_SIZE - 1U) / EFI_PAGE_SIZE;
++  Status = GpiDmaAllocate (Pages, &Buffer);
++  Ring->Host = Buffer.Host;
++  Ring->Device = Buffer.Device;
++  Ring->Mapping = Buffer.Mapping;
++  Ring->Pages = Buffer.Pages;
++  if (EFI_ERROR (Status)) return Status;
++  /* Transfer ring WP points to the next free TRE, as in Linux. */
++  Ring->DoorbellOffset = 0;
++  ZeroMem (Ring->Host, Ring->Pages * EFI_PAGE_SIZE);
++  /* Linux gpi_alloc_ring() uses dma_alloc_coherent().  Our IOMMU common
++     buffer can be cached, so publish initialization before hardware owns
++     the event ring.  Otherwise dirty zero-filled cache lines can later
++     overwrite DMA-produced EREs.  Clean the entire zeroed allocation,
++     including padding, before any ring address reaches GPI. */
++  WriteBackDataCacheRange (Ring->Host, Ring->Pages * EFI_PAGE_SIZE);
++  return EFI_SUCCESS;
++}
++
++STATIC VOID
++GpiRingFree (IN OUT GPI_RING *Ring)
++{
++  GPI_BUFFER Buffer;
++  if ((Ring == NULL) || (Ring->Host == NULL)) return;
++  Buffer.Host = Ring->Host;
++  Buffer.Device = Ring->Device;
++  Buffer.Mapping = Ring->Mapping;
++  Buffer.Pages = Ring->Pages;
++  GpiDmaFree (&Buffer);
++  Ring->Mapping = Buffer.Mapping;
++  if (Buffer.Host == NULL) ZeroMem (Ring, sizeof (*Ring));
++}
++
++STATIC EFI_STATUS
++GpiCommand (IN BOOLEAN Event, IN UINT8 Channel, IN UINT8 Opcode, IN UINT32 State)
++{
++  UINTN Command = Event ? GPI_EV_CMD (GPII_ID) : GPI_CH_CMD (GPII_ID);
++  UINTN Context = Event ? GPI_EV_CTX (GPII_ID) : GPI_CH_CTX (GPII_ID, Channel);
++  UINTN IrqStatus = Event ? GPI_EV_CTRL_STATUS (GPII_ID) : GPI_CH_CTRL_STATUS (GPII_ID);
++  UINTN IrqClear = Event ? GPI_EV_CTRL_CLEAR (GPII_ID) : GPI_CH_CTRL_CLEAR (GPII_ID);
++  UINT32 Mask = Event ? BIT (0) : BIT (Channel);
++  UINT32 Elapsed;
++  /* Linux waits for a fresh control acknowledgement, not merely the target
++     state: RESET can leave an already-allocated event ring in that state.
++     Both channel and event DEALLOC acknowledge without changing HW state. */
++  GpiWrite (IrqClear, Mask);
++  GpiWrite (Command, ((UINT32)Opcode << 24) | (Event ? 0U : Channel));
++  for (Elapsed = 0; Elapsed < GPI_CMD_TIMEOUT_US; Elapsed += 10U) {
++    if ((GpiRead (IrqStatus) & Mask) != 0) {
++      UINT32 Current = GPI_STATE (GpiRead (Context + GPI_CONFIG));
++      GpiWrite (IrqClear, Mask);
++      if ((Opcode == 10U) || (Current == State)) return EFI_SUCCESS;
++      /* Linux ignores STOP_IN_PROC and awaits the final STOP interrupt. */
++      if (Current != 4U) {
++        mGpi.CommandFailed = TRUE;
++        return EFI_DEVICE_ERROR;
++      }
++    }
++    MicroSecondDelay (10);
+   }
+-  *Protocol = NULL;
+-  if (mMuGpi == NULL) {
+-    return EFI_NOT_READY;
++  mGpi.CommandFailed = TRUE;
++  return EFI_TIMEOUT;
++}
++
++STATIC VOID
++GpiConfigureSe (VOID)
++{
++  UINT32 Value;
++
++  /*
++   * Keep the GENI engine in one well-defined mode.  This is the same mode
++   * transition as geni_se_select_gpi_mode() in Linux: clear stale IRQs and
++   * FIFO enables before asserting GENI_DMA_MODE_EN and the GSI events.
++   */
++  GpiSeWrite (SE_GSI_EVENT_EN, 0);
++  GpiSeWrite (SE_M_IRQ_CLEAR, 0xffffffffU);
++  GpiSeWrite (SE_S_IRQ_CLEAR, 0xffffffffU);
++  /* geni_se_irq_clear() also clears both GENI DMA interrupt banks.  Leaving
++     a stale completion/error latched here can make the first GPI transfer
++     look complete before the event ring has received its ERE. */
++  GpiSeWrite (SE_DMA_TX_IRQ_CLEAR, 0xffffffffU);
++  GpiSeWrite (SE_DMA_RX_IRQ_CLEAR, 0xffffffffU);
++  GpiSeWrite (SE_IRQ_EN, 0);
++  Value = GpiSeRead (SE_M_IRQ_EN);
++  Value &= ~(SE_M_CMD_DONE_EN | SE_M_TX_FIFO_WATERMARK_EN |
++             SE_M_RX_FIFO_WATERMARK_EN | SE_M_RX_FIFO_LAST_EN);
++  GpiSeWrite (SE_M_IRQ_EN, Value);
++
++  /* geni_se_io_init(): clocks and DMA-side AHB paths must be ungated. */
++  Value = GpiSeRead (SE_CGC_CTRL);
++  GpiSeWrite (SE_CGC_CTRL, Value | SE_DEFAULT_CGC_EN);
++  Value = GpiSeRead (SE_DMA_GENERAL_CFG);
++  GpiSeWrite (SE_DMA_GENERAL_CFG, Value | SE_DMA_GENERAL_CLK_EN);
++  GpiSeWrite (SE_OUTPUT_CTRL, 0x7fU);
++  GpiSeWrite (SE_FORCE_DEFAULT, BIT (0));
++
++  /* Linux qcom-geni-i2c.c: 19.2 MHz / 400 kHz: div=2, high=5, low=11, cycle=22. */
++  GpiSeWrite (SE_CLK_SEL, 0);
++  GpiSeWrite (SE_SER_M_CLK_CFG, (2U << 4) | BIT (0));
++  GpiSeWrite (SE_I2C_SCL_COUNTERS, 22U | (11U << 10) | (5U << 20));
++  GpiSeWrite (SE_DMA_MODE, SE_DMA_MODE_EN);
++  GpiSeWrite (SE_GSI_EVENT_EN, 0xfU);
++}
++
++STATIC VOID
++GpiProgramChannel (IN UINT8 Channel, IN GPI_RING *Ring, IN BOOLEAN Output)
++{
++  UINTN Base = GPI_CH_CTX (GPII_ID, Channel);
++  GpiWrite (Base + GPI_CONFIG, (GPI_EL_SIZE << 24) | (Output ? BIT (3) : 0) | 2U);
++  GpiWrite (Base + GPI_LENGTH, Ring->Length);
++  GpiWrite (Base + GPI_RING_BASE_L, (UINT32)Ring->Device);
++  GpiWrite (Base + GPI_RING_BASE_H, (UINT32)(Ring->Device >> 32));
++  /* Linux programs the ring doorbell's high half during allocation.  The
++     low half is then advanced for each queued TRE. */
++  GpiWrite (GPI_CH_DB (GPII_ID, Channel) + sizeof (UINT32),
++            (UINT32)(Ring->Device >> 32));
++  GpiWrite (GPI_CH_SCRATCH (GPII_ID, Channel, 0),
++            ((UINT32)(Channel ^ 1U) << 16) |
++            (GPI_I2C_PROTOCOL << 4) | GPI_SEID);
++  GpiWrite (GPI_CH_SCRATCH (GPII_ID, Channel, 1), 0);
++  GpiWrite (GPI_CH_SCRATCH (GPII_ID, Channel, 2), 0);
++  GpiWrite (GPI_CH_SCRATCH (GPII_ID, Channel, 3), 0);
++  GpiWrite (GPI_CH_QOS (GPII_ID, Channel), 1);
++}
++
++STATIC VOID
++GpiProgramEvent (VOID)
++{
++  UINTN Base = GPI_EV_CTX (GPII_ID);
++  mGpi.EventRing.DoorbellOffset = mGpi.EventRing.Length - GPI_EL_SIZE;
++  GpiWrite (Base + GPI_CONFIG, (GPI_EL_SIZE << 24) | BIT (16) | 2U);
++  GpiWrite (Base + GPI_LENGTH, mGpi.EventRing.Length);
++  GpiWrite (Base + GPI_RING_BASE_L, (UINT32)mGpi.EventRing.Device);
++  GpiWrite (Base + GPI_RING_BASE_H, (UINT32)(mGpi.EventRing.Device >> 32));
++  GpiWrite (Base + GPI_INT_MOD, 0);
++  GpiWrite (Base + GPI_MSI_L, 0);
++  GpiWrite (Base + GPI_MSI_H, 0);
++  GpiWrite (Base + GPI_RP_UPDATE_L, 0);
++  GpiWrite (Base + GPI_RP_UPDATE_H, 0);
++  GpiWrite (GPI_EV_DB (GPII_ID) + sizeof (UINT32),
++            (UINT32)(mGpi.EventRing.Device >> 32));
++  GpiWrite (GPI_EV_DB (GPII_ID),
++            (UINT32)(mGpi.EventRing.Device + mGpi.EventRing.DoorbellOffset));
++}
++
++STATIC EFI_STATUS
++GpiStart (VOID)
++{
++  EFI_STATUS Status;
++  mGpi.HaveQuiesced = FALSE;
++  mGpi.EventTouched = TRUE;
++  Status = GpiCommand (TRUE, 0, 0, GPI_CH_ALLOCATED);
++  if (EFI_ERROR (Status)) return Status;
++  GpiProgramEvent ();
++  mGpi.ChannelTouched[GPI_TX_CH] = TRUE;
++  Status = GpiCommand (FALSE, GPI_TX_CH, 0, GPI_CH_ALLOCATED);
++  if (EFI_ERROR (Status)) return Status;
++  mGpi.ChannelTouched[GPI_RX_CH] = TRUE;
++  Status = GpiCommand (FALSE, GPI_RX_CH, 0, GPI_CH_ALLOCATED);
++  if (EFI_ERROR (Status)) return Status;
++  GpiProgramChannel (GPI_TX_CH, &mGpi.TxRing, TRUE);
++  GpiProgramChannel (GPI_RX_CH, &mGpi.RxRing, FALSE);
++  Status = GpiCommand (FALSE, GPI_TX_CH, 1, GPI_CH_STARTED);
++  if (EFI_ERROR (Status)) return Status;
++  return GpiCommand (FALSE, GPI_RX_CH, 1, GPI_CH_STARTED);
++}
++
++/* Linux gpi_terminate_all() stops both channels before resetting them.
++   Retain every DMA allocation on failure; callers fence the shared SE so
++   FIFO cannot take ownership while a channel may still access memory. */
++STATIC EFI_STATUS
++GpiQuiesce (IN BOOLEAN Failed)
++{
++  EFI_STATUS Result = EFI_SUCCESS;
++  EFI_STATUS Status;
++  UINT8 Channel;
++  UINT32 State;
++  UINT32 Elapsed;
++  for (Channel = 0; Channel < 2; ++Channel) {
++    if (!mGpi.ChannelTouched[Channel]) continue;
++    State = GPI_STATE (GpiRead (GPI_CH_CTX (GPII_ID, Channel)));
++    if ((State == GPI_CH_STARTED) || (State == 4U)) {
++      Status = GpiCommand (FALSE, Channel, 2, 3);
++      if (EFI_ERROR (Status)) Result = Status;
++    }
++  }
++  if (EFI_ERROR (Result)) return Result;
++  for (Channel = 0; Channel < 2; ++Channel) {
++    if (!mGpi.ChannelTouched[Channel]) continue;
++    State = GPI_STATE (GpiRead (GPI_CH_CTX (GPII_ID, Channel)));
++    if (State != 0) {
++      Status = GpiCommand (FALSE, Channel, 9, GPI_CH_ALLOCATED);
++      if (EFI_ERROR (Status)) return Status;
++      Status = GpiCommand (FALSE, Channel, 10, 0);
++      if (EFI_ERROR (Status)) return Status;
++    }
++    mGpi.ChannelTouched[Channel] = FALSE;
++  }
++  if (mGpi.SeReady) {
++    /* STOP_STRETCH may retain the bus after CMD_ACTIVE has cleared. */
++    if (Failed || ((GpiSeRead (SE_GENI_STATUS) & BIT (0)) != 0)) {
++      GpiSeWrite (SE_M_IRQ_CLEAR, SE_M_CMD_ABORT);
++      GpiSeWrite (SE_M_CMD_CTRL, BIT (1));
++      for (Elapsed = 0; Elapsed < GPI_CMD_TIMEOUT_US; Elapsed += 10) {
++        if (((GpiSeRead (SE_M_IRQ_STATUS) & SE_M_CMD_ABORT) != 0) &&
++            ((GpiSeRead (SE_GENI_STATUS) & BIT (0)) == 0)) break;
++        MicroSecondDelay (10);
++      }
++      if (Elapsed == GPI_CMD_TIMEOUT_US) return EFI_TIMEOUT;
++    }
++    GpiSeWrite (SE_GSI_EVENT_EN, 0);
++    GpiSeWrite (SE_M_IRQ_CLEAR, MAX_UINT32);
++    mGpi.SeReady = FALSE;
++  }
++  if (mGpi.EventTouched) {
++    if (GPI_STATE (GpiRead (GPI_EV_CTX (GPII_ID))) != 0) {
++      Status = GpiCommand (TRUE, 0, 9, GPI_CH_ALLOCATED);
++      if (EFI_ERROR (Status)) return Status;
++      Status = GpiCommand (TRUE, 0, 10, 0);
++      if (EFI_ERROR (Status)) return Status;
++    }
++    mGpi.EventTouched = FALSE;
++    mGpi.HaveQuiesced = !mGpi.CommandFailed;
+   }
+-  *Protocol = mMuGpi;
++  mGpi.TxRing.DoorbellOffset = mGpi.RxRing.DoorbellOffset = 0;
++  mGpi.EventRing.ReadOffset = 0;
++  /* A timed-out control command may take effect after a state read.  Keep
++     the lease fenced even if later reads happened to look idle. */
++  return mGpi.CommandFailed ? EFI_DEVICE_ERROR : EFI_SUCCESS;
++}
++
++STATIC EFI_STATUS
++GpiInitialize (IN UINT32 Instance)
++{
++  EFI_STATUS Status;
++  CONST CR_TARGET_QUP_CONTEXT *Context;
++  CONST CR_TARGET_QUP_WRAPPER *Wrapper;
++  UINTN Index;
++
++  if (mGpi.DmaCleanupFailed) return EFI_DEVICE_ERROR;
++  if (mGpi.Initialized) return (Instance == GPI_I2C_INSTANCE) ? EFI_SUCCESS : EFI_UNSUPPORTED;
++  if (Instance != GPI_I2C_INSTANCE) return EFI_UNSUPPORTED;
++  Status = gBS->LocateProtocol (&gEfiQupCrProtocolGuid, NULL, (VOID **)&mGpi.Qup);
++  if (EFI_ERROR (Status) || (mGpi.Qup == NULL) ||
++      EFI_ERROR (mGpi.Qup->GetContext (mGpi.Qup, &Context))) return EFI_NOT_READY;
++  if (Context == NULL) return EFI_NOT_FOUND;
++  Wrapper = NULL;
++  for (Index = 0; Index < Context->QupCount; ++Index) {
++    if (Context->Qup[Index].Id == GPI_CONTROLLER_ID) {
++      Wrapper = &Context->Qup[Index];
++      break;
++    }
++  }
++  if ((Wrapper == NULL) || (Wrapper->SerialEngineCount <= GPI_SE_INDEX) ||
++      (Wrapper->SerialEngineBase[GPI_SE_INDEX] == 0)) {
++    return EFI_NOT_FOUND;
++  }
++  mGpi.Controller = NULL;
++  for (Index = 0; Index < Context->GpiCount; ++Index) {
++    if (Context->Gpi[Index].Id == GPI_CONTROLLER_ID) {
++      mGpi.Controller = &Context->Gpi[Index];
++      break;
++    }
++  }
++  if (mGpi.Controller == NULL) return EFI_NOT_FOUND;
++  if ((mGpi.Controller->Base != 0x00a00000ULL) ||
++      (mGpi.Controller->IommuStreamId != GPI_SID) ||
++      ((mGpi.Controller->ChannelMask & BIT (GPII_ID)) == 0)) {
++    return EFI_COMPROMISED_DATA;
++  }
++  /* Linux sm8450-gpi-dma maps the EE register window at base - 0x10000. */
++  if (mGpi.Controller->Base < GPI_EE_OFFSET) return EFI_COMPROMISED_DATA;
++  mGpi.GpiBase = (UINTN)(mGpi.Controller->Base - GPI_EE_OFFSET);
++  mGpi.SeBase = (UINTN)Wrapper->SerialEngineBase[GPI_SE_INDEX];
++  Status = GpiConfigurePins ();
++  if (EFI_ERROR (Status)) return Status;
++  DEBUG ((DEBUG_INFO,
++          "GPI: controller=%u gpii=%u seid=%u ee=0x%lx se=0x%lx sid=0x%x\n",
++          GPI_CONTROLLER_ID, GPII_ID, GPI_SEID, mGpi.GpiBase,
++          mGpi.SeBase, GPI_SID));
++
++  Status = gBS->LocateProtocol (&gEfiClockCrProtocolGuid, NULL, (VOID **)&mGpi.Clock);
++  if (EFI_ERROR (Status) || (mGpi.Clock == NULL)) return EFI_NOT_READY;
++  Status = mGpi.Clock->SetClock (mGpi.Clock, "gcc", "gcc_qupv3_wrap_1_m_ahb_clk", 0, TRUE);
++  if (EFI_ERROR (Status)) return Status;
++  Status = mGpi.Clock->SetClock (mGpi.Clock, "gcc", "gcc_qupv3_wrap_1_s_ahb_clk", 0, TRUE);
++  if (EFI_ERROR (Status)) return Status;
++  Status = mGpi.Clock->SetClock (mGpi.Clock, "gcc", "gcc_qupv3_wrap1_s1_clk", 19200000, TRUE);
++  if (EFI_ERROR (Status)) return Status;
++
++  Status = gBS->LocateProtocol (&gEdkiiIoMmuProtocolGuid, NULL, (VOID **)&mGpi.Iommu);
++  if (EFI_ERROR (Status) || (mGpi.Iommu == NULL)) return EFI_NOT_READY;
++  Status = gBS->LocateProtocol (&gEfiSmmuCrProtocolGuid, NULL, (VOID **)&mGpi.Smmu);
++  if (!EFI_ERROR (Status) && (mGpi.Smmu != NULL)) {
++    Status = mGpi.Smmu->Attach (mGpi.Smmu, 0, 0xffff, GPI_SID);
++    if (EFI_ERROR (Status) && (Status != EFI_ALREADY_STARTED)) return Status;
++  }
++  Status = GpiRingAllocate (GPI_RING_ELEMENTS, &mGpi.TxRing);
++  if (EFI_ERROR (Status)) return Status;
++  Status = GpiRingAllocate (GPI_RING_ELEMENTS, &mGpi.RxRing);
++  if (EFI_ERROR (Status)) goto Error;
++  Status = GpiRingAllocate (GPI_EVENT_ELEMENTS, &mGpi.EventRing);
++  if (EFI_ERROR (Status)) goto Error;
++  Status = GpiDmaAllocate (1, &mGpi.Data);
++  if (EFI_ERROR (Status)) goto Error;
++  /* Hardware receives ring addresses only in GpiStart(), after all
++     allocations succeed.  This error path therefore cannot free live DMA. */
++  mGpi.Initialized = TRUE;
+   return EFI_SUCCESS;
++Error:
++  GpiDmaFree (&mGpi.Data);
++  GpiRingFree (&mGpi.EventRing);
++  GpiRingFree (&mGpi.RxRing);
++  GpiRingFree (&mGpi.TxRing);
++  return Status;
+ }
+ 
+-STATIC EFI_GPI_CR_PROTOCOL mGpiProtocol = {
+-  .Revision       = EFI_GPI_CR_PROTOCOL_REVISION,
+-  .GetController  = GpiGetController,
+-  .GetContext     = GpiGetContext,
+-  .GetMuProtocol  = GpiGetMuProtocol,
+-  .MuProtocol     = NULL,
+-};
++STATIC VOID
++GpiAdvance (IN GPI_RING *Ring, IN OUT UINT32 *Offset)
++{
++  *Offset += Ring->ElSize;
++  if (*Offset >= Ring->Length) *Offset = 0;
++}
+ 
+-EFI_STATUS
+-EFIAPI
+-GpiCrEntryPoint (
+-  IN EFI_HANDLE        ImageHandle,
+-  IN EFI_SYSTEM_TABLE *SystemTable
+-  )
++STATIC VOID
++GpiTre (IN GPI_RING *Ring, IN OUT UINT32 *Offset,
++        IN UINT32 D0, IN UINT32 D1, IN UINT32 D2, IN UINT32 D3)
+ {
+-  EFI_STATUS             Status;
+-  EFI_QUP_CR_PROTOCOL   *Qup;
++  UINT32 *Tre = (UINT32 *)((UINT8 *)Ring->Host + *Offset);
++  Tre[0] = D0; Tre[1] = D1; Tre[2] = D2; Tre[3] = D3;
++  WriteBackDataCacheRange (Tre, GPI_EL_SIZE);
++  GpiAdvance (Ring, Offset);
++}
+ 
+-  (VOID)SystemTable;
+-  Status = gBS->LocateProtocol (
+-      &gEfiQupCrProtocolGuid, NULL, (VOID **)&Qup);
+-  if (EFI_ERROR (Status) || (Qup == NULL)) {
+-    return EFI_NOT_READY;
++STATIC EFI_STATUS
++GpiWaitEvents (IN UINT8 RequiredChannels, IN UINT32 Length,
++               IN EFI_PHYSICAL_ADDRESS CompletionTre)
++{
++  UINT32 Elapsed;
++  UINT8 CompletedChannels = 0;
++  EFI_PHYSICAL_ADDRESS HardwareRp = 0;
++  for (Elapsed = 0; Elapsed < GPI_XFER_TIMEOUT_US; Elapsed += 20U) {
++    EFI_PHYSICAL_ADDRESS ExpectedRp =
++      mGpi.EventRing.Device + mGpi.EventRing.ReadOffset;
++    HardwareRp = (EFI_PHYSICAL_ADDRESS)GpiRead (
++      GPI_EV_CTX (GPII_ID) + GPI_RING_RP_L);
++    HardwareRp |= (EFI_PHYSICAL_ADDRESS)GpiRead (
++      GPI_EV_CTX (GPII_ID) + GPI_RING_RP_H) << 32;
++    if ((HardwareRp < mGpi.EventRing.Device) ||
++        (HardwareRp >= mGpi.EventRing.Device + mGpi.EventRing.Length) ||
++        (((HardwareRp - mGpi.EventRing.Device) % GPI_EL_SIZE) != 0))
++      return EFI_DEVICE_ERROR;
++    if (HardwareRp != ExpectedRp) {
++      UINT32 *Event = (UINT32 *)((UINT8 *)mGpi.EventRing.Host + mGpi.EventRing.ReadOffset);
++      UINT32 Type;
++      UINT32 Code;
++      UINT32 EventLength;
++      UINT32 Channel;
++      UINT32 NotifyErrorMask = GPI_NOTIFY_I2C_ERROR_MASK;
++      UINT32 CompletionErrorMask = GPI_TCE_I2C_ERROR_MASK;
++      InvalidateDataCacheRange (Event, GPI_EL_SIZE);
++      Type = (Event[3] >> 16) & 0xffU;
++      Channel = Event[3] >> 24;
++      Code = Event[2] >> 24;
++      EventLength = Event[2] & 0x00ffffffU;
++      /* Android distinguishes address NACK (GP_LENGTH zero) from data
++         NACK; a data-phase NACK is an error only for writes. */
++      if ((RequiredChannels == BIT (GPI_RX_CH)) &&
++          (GpiSeRead (SE_M_GP_LENGTH) != 0)) {
++        NotifyErrorMask &= ~BIT (10);
++        CompletionErrorMask &= ~BIT (6);
++      }
++      /* Android waipio gi2c_ev_cb() receives the GENI GP IRQ status in
++         QUP notifications; NACK, bus protocol and arbitration errors must
++         not be discarded while waiting for a later DMA completion. */
++      if ((Type == GPI_EVENT_QUP_NOTIFY) &&
++          ((Event[0] & NotifyErrorMask) != 0)) {
++        return EFI_DEVICE_ERROR;
++      }
++      if (Type == GPI_EVENT_XFER_COMPLETE) {
++        /* gi2c_gsi_cb_err() checks the same GP errors in the TCE status
++           field, encoded at bits 6/8/9 rather than GENI bits 10/12/13. */
++        if (((Event[3] & CompletionErrorMask) != 0) ||
++            (Code == GPI_EVENT_ERROR) ||
++            ((Code != GPI_EVENT_SUCCESS) && (Code != GPI_EVENT_EOT) && (Code != GPI_EVENT_EOB)) ||
++            (Channel >= 2U)) return EFI_DEVICE_ERROR;
++        /* A read has a TX GO TRE (channel 0) linked to an RX DMA TRE
++           (channel 1).  The TX GO does not carry a data DMA TRE, so Linux
++           completes the transfer from the RX channel's EOT event.  Wait on
++           the channel that owns the payload instead of assuming that both
++           channels emit an event. */
++        if ((RequiredChannels & BIT (Channel)) != 0) {
++          EFI_PHYSICAL_ADDRESS Pointer = (EFI_PHYSICAL_ADDRESS)Event[0] |
++              ((EFI_PHYSICAL_ADDRESS)Event[1] << 32);
++          if ((Pointer != CompletionTre) ||
++              ((Length != 0) && (EventLength != Length))) {
++            return EFI_DEVICE_ERROR;
++          }
++          CompletedChannels |= (UINT8)BIT (Channel);
++        }
++      }
++      /* Like Linux gpi_ring_recycle_ev_element(), recycle by advancing the
++         consumer and doorbell only.  CPU stores here would dirty a cache line
++         shared with events that the device can still be writing. */
++      GpiAdvance (&mGpi.EventRing, &mGpi.EventRing.ReadOffset);
++      GpiAdvance (&mGpi.EventRing, &mGpi.EventRing.DoorbellOffset);
++      GpiWrite (GPI_EV_DB (GPII_ID),
++                (UINT32)(mGpi.EventRing.Device + mGpi.EventRing.DoorbellOffset));
++      if ((CompletedChannels & RequiredChannels) == RequiredChannels) {
++        return EFI_SUCCESS;
++      }
++    }
++    MicroSecondDelay (20);
+   }
++  DEBUG ((DEBUG_ERROR, "GPI: timeout events=0x%x/0x%x RP=0x%lx\n",
++          CompletedChannels, RequiredChannels, HardwareRp));
++  return EFI_TIMEOUT;
++}
++
++STATIC EFI_STATUS
++GpiTransferOne (IN UINT16 Address, IN BOOLEAN Read, IN BOOLEAN KeepBus,
++                IN UINT8 *Buffer, IN UINT32 Length)
++{
++  UINT32 TxOffset;
++  UINT32 RxOffset;
++  UINT32 Config0 = 11U | (5U << 8) | (22U << 16) | BIT (24) | BIT (25);
++  UINT32 Go = ((UINT32)Address << 8) | (KeepBus ? BIT (26) : 0);
++  EFI_STATUS Status;
+ 
+-  Status = gBS->LocateProtocol (
+-      &gQcomGpiInitProtocolGuid, NULL, (VOID **)&mMuGpi);
+-  if (EFI_ERROR (Status) || (mMuGpi == NULL) ||
+-      (mMuGpi->Revision < MU_GPI_PROTOCOL_REVISION) ||
+-      (mMuGpi->IfaceReg == NULL) || (mMuGpi->IfaceDereg == NULL) ||
+-      (mMuGpi->ProcessTre == NULL)) {
++  if ((Buffer == NULL) || (Length == 0) || (Length > 0x00ffffffU)) {
++    return EFI_INVALID_PARAMETER;
++  }
++  if (Length > (mGpi.Data.Pages * EFI_PAGE_SIZE)) {
++    return EFI_BAD_BUFFER_SIZE;
++  }
++  if (!Read) CopyMem (mGpi.Data.Host, Buffer, Length);
++  WriteBackDataCacheRange (mGpi.Data.Host, Length);
++  TxOffset = mGpi.TxRing.DoorbellOffset;
++  RxOffset = mGpi.RxRing.DoorbellOffset;
++  if (Read) {
++    /* The TX GO starts the read; RX only owns the DMA data TRE.  Linux's
++       geni_i2c_gpi() deliberately skips a second CONFIG0 on the RX channel. */
++    GpiTre (&mGpi.RxRing, &RxOffset, (UINT32)mGpi.Data.Device,
++            (UINT32)(mGpi.Data.Device >> 32), Length,
++            GPI_TYPE (GPI_TRE_DMA) | GPI_FLAG_IEOT);
++    GpiTre (&mGpi.TxRing, &TxOffset, Config0, 0, GPI_C0_CLK_DIV,
++            GPI_TYPE (GPI_TRE_CONFIG0) | GPI_FLAG_CHAIN);
++    Go |= 2U;
++    GpiTre (&mGpi.TxRing, &TxOffset, Go, 0, Length,
++            GPI_TYPE (GPI_TRE_GO) | GPI_FLAG_LINK);
++    GpiWrite (GPI_CH_DB (GPII_ID, GPI_RX_CH), (UINT32)(mGpi.RxRing.Device + RxOffset));
++    GpiWrite (GPI_CH_DB (GPII_ID, GPI_TX_CH), (UINT32)(mGpi.TxRing.Device + TxOffset));
++    Status = GpiWaitEvents ((UINT8)BIT (GPI_RX_CH), Length,
++        mGpi.RxRing.Device + (RxOffset + mGpi.RxRing.Length - GPI_EL_SIZE) % mGpi.RxRing.Length);
++    if (!EFI_ERROR (Status)) {
++      InvalidateDataCacheRange (mGpi.Data.Host, Length);
++      CopyMem (Buffer, mGpi.Data.Host, Length);
++    }
++    mGpi.RxRing.DoorbellOffset = RxOffset;
++  } else {
++    GpiTre (&mGpi.TxRing, &TxOffset, Config0, 0, GPI_C0_CLK_DIV,
++            GPI_TYPE (GPI_TRE_CONFIG0) | GPI_FLAG_CHAIN);
++    Go |= 1U;
++    GpiTre (&mGpi.TxRing, &TxOffset, Go, 0, Length,
++            GPI_TYPE (GPI_TRE_GO) | GPI_FLAG_CHAIN);
++    GpiTre (&mGpi.TxRing, &TxOffset, (UINT32)mGpi.Data.Device,
++            (UINT32)(mGpi.Data.Device >> 32), Length,
++            GPI_TYPE (GPI_TRE_DMA) | GPI_FLAG_IEOT);
++    GpiWrite (GPI_CH_DB (GPII_ID, GPI_TX_CH), (UINT32)(mGpi.TxRing.Device + TxOffset));
++    Status = GpiWaitEvents ((UINT8)BIT (GPI_TX_CH), Length,
++        mGpi.TxRing.Device + (TxOffset + mGpi.TxRing.Length - GPI_EL_SIZE) % mGpi.TxRing.Length);
++  }
++  mGpi.TxRing.DoorbellOffset = TxOffset;
++  return Status;
++}
++
++STATIC EFI_STATUS
++EFIAPI
++GpiI2cTransfer (IN EFI_GPI_CR_PROTOCOL *This, IN UINT32 Instance,
++                IN UINT16 SlaveAddress, IN EFI_GPI_I2C_DESCRIPTOR *Descriptors,
++                IN UINT16 DescriptorCount, OUT UINT32 *Transferred OPTIONAL)
++{
++  EFI_STATUS Status;
++  EFI_STATUS Cleanup;
++  UINTN Index;
++  UINT32 Total = 0;
++  UINT64 Requested = 0;
++  UINT32 EventState;
++  UINT32 TxState;
++  UINT32 RxState;
++  if (Transferred != NULL) *Transferred = 0;
++  if ((This != &mGpi.Protocol) || (Descriptors == NULL) || (DescriptorCount == 0) ||
++      (SlaveAddress > 0x7f)) return EFI_INVALID_PARAMETER;
++  if (Instance != GPI_I2C_INSTANCE) return EFI_UNSUPPORTED;
++  /* Validate the whole request before its first START.  A missing final STOP
++     cannot carry a bus lease across calls to this synchronous protocol. */
++  for (Index = 0; Index < DescriptorCount; ++Index) {
++    UINT32 Flags = Descriptors[Index].Flags;
++    if ((Descriptors[Index].Buffer == NULL) || (Descriptors[Index].Length == 0) ||
++        ((Flags & ~(EFI_GPI_I2C_FLAG_START | EFI_GPI_I2C_FLAG_STOP |
++                    EFI_GPI_I2C_FLAG_WRITE | EFI_GPI_I2C_FLAG_READ)) != 0) ||
++        ((Flags & EFI_GPI_I2C_FLAG_START) == 0) ||
++        (((Flags & EFI_GPI_I2C_FLAG_READ) != 0) ==
++         ((Flags & EFI_GPI_I2C_FLAG_WRITE) != 0)) ||
++        ((Index + 1 == DescriptorCount) && ((Flags & EFI_GPI_I2C_FLAG_STOP) == 0)))
++      return EFI_INVALID_PARAMETER;
++    Requested += Descriptors[Index].Length;
++    if ((Descriptors[Index].Length > EFI_PAGE_SIZE) || (Requested > MAX_UINT32))
++      return EFI_BAD_BUFFER_SIZE;
++  }
++  Status = gBS->LocateProtocol (&gEfiQupCrProtocolGuid, NULL, (VOID **)&mGpi.Qup);
++  if (EFI_ERROR (Status) || (mGpi.Qup == NULL) ||
++      (mGpi.Qup->Revision < EFI_QUP_CR_PROTOCOL_REVISION) ||
++      (mGpi.Qup->AcquireSe == NULL) || (mGpi.Qup->ReleaseSe == NULL))
+     return EFI_NOT_READY;
++  Status = mGpi.Qup->AcquireSe (mGpi.Qup, GPI_CONTROLLER_ID, GPI_SE_INDEX,
++                                &mGpi, QupCrSeGpi);
++  if (EFI_ERROR (Status)) return Status;
++  Status = GpiInitialize (Instance);
++  if (!EFI_ERROR (Status)) {
++    EventState = GPI_STATE (GpiRead (GPI_EV_CTX (GPII_ID)));
++    TxState = GPI_STATE (GpiRead (GPI_CH_CTX (GPII_ID, GPI_TX_CH)));
++    RxState = GPI_STATE (GpiRead (GPI_CH_CTX (GPII_ID, GPI_RX_CH)));
++    /* A channel or active GENI command left by another owner must not be
++       reset or reused.  Accept retained ALLOCATED state only after our
++       own acknowledged RESET/DEALLOC sequence under the shared SE lease. */
++    if ((EventState > GPI_CH_ALLOCATED) || (TxState > GPI_CH_ALLOCATED) ||
++        (RxState > GPI_CH_ALLOCATED) ||
++        (!mGpi.HaveQuiesced && ((EventState | TxState | RxState) != 0)) ||
++        ((GpiSeRead (SE_GENI_STATUS) & BIT (0)) != 0)) {
++      Status = EFI_ACCESS_DENIED;
++    } else if (((GpiSeRead (SE_GENI_FW_REVISION_RO) >> 8) & 0xffU) != 3U) {
++      /* GPI transports TREs; it does not install I2C sequencer firmware. */
++      DEBUG ((DEBUG_ERROR, "GPI: SE1 has no I2C firmware (FW=0x%x)\n",
++              GpiSeRead (SE_GENI_FW_REVISION_RO)));
++      Status = EFI_UNSUPPORTED;
++    } else {
++      mGpi.SeReady = TRUE;
++      GpiConfigureSe ();
++      Status = GpiStart ();
++    }
+   }
++  for (Index = 0; !EFI_ERROR (Status) && (Index < DescriptorCount); ++Index) {
++    UINT32 Flags = Descriptors[Index].Flags;
++    Status = GpiTransferOne (SlaveAddress, (Flags & EFI_GPI_I2C_FLAG_READ) != 0,
++                             (Flags & EFI_GPI_I2C_FLAG_STOP) == 0,
++                             Descriptors[Index].Buffer, Descriptors[Index].Length);
++    if (!EFI_ERROR (Status)) Total += Descriptors[Index].Length;
++  }
++  /* Even on success stop/reset both GPI channels before permitting FIFO
++     mode.  On failed quiescence keep mappings and permanently fence the SE. */
++  Cleanup = GpiQuiesce (EFI_ERROR (Status));
++  if (EFI_ERROR (Cleanup)) {
++    DEBUG ((DEBUG_ERROR, "GPI: quiesce failed %r; retaining DMA and SE ownership\n", Cleanup));
++    if (!EFI_ERROR (Status)) Status = Cleanup;
++  }
++  mGpi.Qup->ReleaseSe (mGpi.Qup, GPI_CONTROLLER_ID, GPI_SE_INDEX,
++                       &mGpi, !EFI_ERROR (Cleanup));
++  if (Transferred != NULL) *Transferred = Total;
++  return Status;
++}
+ 
+-  mGpiContext = CrDalGetQupContext ();
+-  if ((mGpiContext == NULL) || (mGpiContext->Gpi == NULL) ||
+-      (mGpiContext->GpiCount == 0)) {
+-    return EFI_NOT_FOUND;
++STATIC EFI_STATUS
++EFIAPI
++GpiGetController (IN EFI_GPI_CR_PROTOCOL *This, IN UINT8 ControllerId,
++                  OUT CONST CR_TARGET_GPI_CONTROLLER **Controller)
++{
++  CONST CR_TARGET_QUP_CONTEXT *Context;
++  UINTN Index;
++  (VOID)This;
++  if (Controller == NULL) return EFI_INVALID_PARAMETER;
++  *Controller = NULL;
++  Context = CrDalGetQupContext ();
++  if (Context == NULL) return EFI_NOT_READY;
++  for (Index = 0; Index < Context->GpiCount; ++Index) {
++    if (Context->Gpi[Index].Id == ControllerId) {
++      *Controller = &Context->Gpi[Index];
++      return EFI_SUCCESS;
++    }
+   }
++  return EFI_NOT_FOUND;
++}
+ 
+-  mGpiProtocol.MuProtocol = mMuGpi;
++STATIC EFI_STATUS
++EFIAPI
++GpiGetContext (IN EFI_GPI_CR_PROTOCOL *This, OUT CONST CR_TARGET_QUP_CONTEXT **Context)
++{
++  (VOID)This;
++  if (Context == NULL) return EFI_INVALID_PARAMETER;
++  *Context = CrDalGetQupContext ();
++  return (*Context == NULL) ? EFI_NOT_FOUND : EFI_SUCCESS;
++}
++
++STATIC EFI_GPI_CR_PROTOCOL mGpiProtocol = {
++  EFI_GPI_CR_PROTOCOL_REVISION, GpiGetController, GpiGetContext, GpiI2cTransfer
++};
+ 
++EFI_STATUS
++EFIAPI
++GpiCrEntryPoint (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
++{
++  (VOID)SystemTable;
++  ZeroMem (&mGpi, sizeof (mGpi));
++  mGpi.Protocol = mGpiProtocol;
+   return gBS->InstallMultipleProtocolInterfaces (
+-      &ImageHandle, &gEfiGpiCrProtocolGuid, &mGpiProtocol, NULL);
++      &ImageHandle, &gEfiGpiCrProtocolGuid, &mGpi.Protocol, NULL);
+ }
+diff --git a/Driver/GpiCrDxe/GpiCrDxe.inf b/Driver/GpiCrDxe/GpiCrDxe.inf
+index c827015..c21acdd 100644
+--- a/Driver/GpiCrDxe/GpiCrDxe.inf
++++ b/Driver/GpiCrDxe/GpiCrDxe.inf
+@@ -10,19 +10,31 @@
+   GpiCrDxe.c
+ 
+ [Packages]
++  MdeModulePkg/MdeModulePkg.dec
+   MdePkg/MdePkg.dec
+   CranePkg/CranePkg.dec
+ 
+ [LibraryClasses]
++  BaseMemoryLib
++  CacheMaintenanceLib
+   CrDalLib
++  DebugLib
++  IoLib
++  MemoryAllocationLib
++  SynchronizationLib
++  TimerLib
+   UefiBootServicesTableLib
+   UefiDriverEntryPoint
++  UefiLib
+ 
+ [Protocols]
+   gEfiCrDalProtocolGuid ## CONSUMES
+-  gQcomGpiInitProtocolGuid ## CONSUMES (MU GpiDxe)
+   gEfiQupCrProtocolGuid ## CONSUMES
++  gEfiClockCrProtocolGuid ## CONSUMES
++  gEfiGpioCrProtocolGuid ## CONSUMES (optional pinmux)
++  gEdkiiIoMmuProtocolGuid ## CONSUMES
++  gEfiSmmuCrProtocolGuid ## CONSUMES
+   gEfiGpiCrProtocolGuid ## PRODUCES
+ 
+ [Depex]
+-  gEfiCrDalProtocolGuid AND gQcomGpiInitProtocolGuid AND gEfiQupCrProtocolGuid
++  gEfiCrDalProtocolGuid AND gEfiQupCrProtocolGuid
+diff --git a/Driver/I2CCrDxe/I2CCrDxe.c b/Driver/I2CCrDxe/I2CCrDxe.c
+index 0ff725e..11a2be3 100644
+--- a/Driver/I2CCrDxe/I2CCrDxe.c
++++ b/Driver/I2CCrDxe/I2CCrDxe.c
+@@ -1,21 +1,48 @@
+ /** @file
+- *  Bridge MU I2C masters to Crane consumers.
++ *  Native GENI FIFO transport and I2C master adapters for Crane consumers.
+  *
+- *  Prefer an existing PI I2C master.  Waipio's private Qualcomm backend is
+- *  adapted without taking ownership of QUP/GENI registers or DMA.
++ *  HDK8450's LT9611 endpoint uses native FIFO with the shared QUP SE lease.
++ *  Other endpoints can forward to an existing PI or Qualcomm I2C master.
+  *
+  *  SPDX-License-Identifier: MIT
+  */
+ 
+ #include <Uefi.h>
+ 
++#include <Library/BaseLib.h>
+ #include <Library/BaseMemoryLib.h>
++#include <Library/DebugLib.h>
++#include <Library/IoLib.h>
+ #include <Library/MemoryAllocationLib.h>
+ #include <Library/SynchronizationLib.h>
++#include <Library/TimerLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/UefiDriverEntryPoint.h>
+ 
++#include <Protocol/EFIClockCrProtocol.h>
++#include <Protocol/EFIGpioCrProtocol.h>
+ #include <Protocol/EFII2cCrProtocol.h>
++#include <Protocol/EFIQupCrProtocol.h>
++
++#ifndef BIT
++#define BIT(_N)  (1U << (_N))
++#endif
++
++#ifdef CRANE_HOST_TEST
++STATIC EFI_GUID mHostClockCrProtocolGuid =
++  { 0xa355879b, 0x66c2, 0x4901, { 0xb9, 0xa5, 0xc3, 0x0f, 0x31, 0x91, 0x81, 0xc8 } };
++STATIC EFI_GUID mHostGpioCrProtocolGuid =
++  { 0x05726725, 0x2ef4, 0x4f4c, { 0x99, 0xa5, 0xb9, 0x5d, 0x58, 0x19, 0x92, 0xa1 } };
++#define gEfiClockCrProtocolGuid mHostClockCrProtocolGuid
++#define gEfiGpioCrProtocolGuid  mHostGpioCrProtocolGuid
++#ifndef CRANE_MMIO_TEST
++#define MmioRead32(_Address)             ((VOID)(_Address), 0U)
++#define MmioWrite32(_Address, _Value)    ((VOID)(_Address), (VOID)(_Value))
++#define MicroSecondDelay(_Usec)           ((VOID)(_Usec), (UINTN)0)
++#endif
++#undef DEBUG
++#define DEBUG(_Args)                      do { } while (0)
++#endif
+ 
+ #define I2C_CR_DEFAULT_FREQUENCY_KHZ  400U
+ #define I2C_CR_DEFAULT_STRETCH_US     500U
+@@ -23,6 +50,70 @@
+    request too, so all three PI capability limits describe the same policy. */
+ #define I2C_CR_MAX_TRANSFER_BYTES     0x00FFFFFFU
+ 
++/* Linux sm8450 i2c9 / GENI SE1 register contract. */
++#define I2C_FIFO_INSTANCE             10U
++#define I2C_FIFO_SE_BASE              0x00A84000ULL
++#define SE_GENI_STATUS                0x040U
++#define SE_GENI_IF_DISABLE_RO         0x064U
++#define SE_GENI_FW_REVISION_RO        0x068U
++#define SE_HW_PARAM_0                 0xE24U
++#define SE_CLK_SEL                    0x07CU
++#define SE_DMA_MODE_EN                0x258U
++#define SE_TX_PACKING_CFG0            0x260U
++#define SE_TX_PACKING_CFG1            0x264U
++#define SE_BYTE_GRAN                  0x254U
++#define SE_RX_PACKING_CFG0            0x284U
++#define SE_RX_PACKING_CFG1            0x288U
++#define SE_M_CMD0                     0x600U
++#define SE_M_CMD_CTRL                 0x604U
++#define SE_M_IRQ_STATUS               0x610U
++#define SE_M_IRQ_EN                   0x614U
++#define SE_M_IRQ_CLEAR                0x618U
++#define SE_M_GP_LENGTH                0x910U
++#define SE_DMA_TX_IRQ_CLEAR           0xC44U
++#define SE_DMA_RX_IRQ_CLEAR           0xD44U
++#define SE_TX_FIFO                    0x700U
++#define SE_RX_FIFO                    0x780U
++#define SE_TX_FIFO_STATUS             0x800U
++#define SE_RX_FIFO_STATUS             0x804U
++#define SE_TX_WATERMARK               0x80CU
++#define SE_RX_WATERMARK               0x810U
++#define SE_RX_RFR_WATERMARK           0x814U
++#define SE_I2C_TX_LEN                 0x26CU
++#define SE_I2C_RX_LEN                 0x270U
++#define SE_GSI_EVENT_EN               0xE18U
++#define SE_IRQ_EN                     0xE1CU
++#define SE_DMA_GENERAL_CFG            0xE30U
++#define SE_CGC_CTRL                   0x028U
++#define SE_OUTPUT_CTRL                0x024U
++#define SE_FORCE_DEFAULT              0x020U
++#define SE_S_IRQ_CLEAR                0x648U
++#define SE_M_CMD_DONE                 BIT (0)
++#define SE_M_CMD_OVERRUN              BIT (1)
++#define SE_M_ILLEGAL_CMD              BIT (2)
++#define SE_M_CMD_FAILURE              BIT (3)
++#define SE_M_CMD_ABORT                BIT (5)
++#define SE_M_GP_IRQ_0                 BIT (9)
++#define SE_M_GP_IRQ_1                 BIT (10)
++#define SE_M_GP_IRQ_3                 BIT (12)
++#define SE_M_GP_IRQ_4                 BIT (13)
++#define SE_M_GENI_CMD_ABORT           BIT (1)
++#define SE_M_RX_FIFO_WATERMARK        BIT (26)
++#define SE_M_RX_FIFO_LAST             BIT (27)
++#define SE_M_TX_FIFO_WATERMARK        BIT (30)
++#define SE_RX_FIFO_WC_MASK            0x01FFFFFFU
++#define SE_TX_FIFO_WC_MASK            0x0FFFFFFFU
++#define SE_M_I2C_ERROR_MASK           (SE_M_CMD_OVERRUN | SE_M_ILLEGAL_CMD | \
++                                       SE_M_CMD_FAILURE | SE_M_CMD_ABORT | \
++                                       SE_M_GP_IRQ_0 | SE_M_GP_IRQ_1 | SE_M_GP_IRQ_3 | \
++                                       SE_M_GP_IRQ_4)
++#define I2C_CMD_WRITE                 0x1U
++#define I2C_CMD_READ                  0x2U
++#define I2C_CMD_WRITE_READ            0x3U
++#define I2C_STOP_STRETCH              BIT (2)
++#define I2C_SLAVE_ADDR_SHIFT          9U
++#define I2C_FIFO_TIMEOUT_US           500000U
++
+ typedef struct {
+   EFI_HANDLE             AliasHandle;
+   EFI_I2C_CR_PROTOCOL     Protocol;
+@@ -31,6 +122,48 @@ typedef struct {
+   EFI_STATUS              QcomOpenStatus;
+ } I2C_CR_INSTANCE;
+ 
++STATIC BOOLEAN mFifoResourcesReady;
++STATIC UINT32 mFifoDepth;
++STATIC EFI_QUP_CR_PROTOCOL *mFifoQup;
++
++STATIC EFI_STATUS
++I2cCrConfigurePins (VOID)
++{
++  EFI_GPIO_CR_PROTOCOL *Gpio;
++  EFI_STATUS            Status;
++  UINTN                 Index;
++
++  Gpio = NULL;
++  Status = gBS->LocateProtocol (&gEfiGpioCrProtocolGuid, NULL, (VOID **)&Gpio);
++  if (EFI_ERROR (Status) || (Gpio == NULL) || (Gpio->ConfigGpio == NULL)) {
++    DEBUG ((DEBUG_WARN, "I2CCr: GPIO pinmux protocol unavailable: %r\n", Status));
++    return EFI_ERROR (Status) ? Status : EFI_NOT_READY;
++  }
++  /* Linux pinctrl-sm8450.c puts qup9 in PINGROUP f1 for GPIO32/33;
++     the function's table index is the TLMM mux selector (1). */
++  for (Index = 0; Index < 2; ++Index) {
++    GpioConfigParams Config;
++    ZeroMem (&Config, sizeof (Config));
++    Config.PinNumber = (UINT16)(32U + Index);
++    Config.OutputEnable = FALSE;
++    Config.FunctionSel = GPIO_FUNC_1;
++    Config.Pull = GPIO_PULL_UP;
++    Config.DriveStrength = GPIO_DRIVE_STRENGTH_UNCHANGE;
++    Config.OutputValue = GPIO_VALUE_UNCHANGE;
++    Status = Gpio->ConfigGpio (Gpio, &Config);
++    if (EFI_ERROR (Status)) {
++      DEBUG ((DEBUG_WARN, "I2CCr: GPIO%u pinmux failed: %r\n", Config.PinNumber, Status));
++      return Status;
++    }
++  }
++  return EFI_SUCCESS;
++}
++
++STATIC I2C_CR_INSTANCE *
++I2cCrInstanceFromProtocol (
++  IN EFI_I2C_CR_PROTOCOL *This
++  );
++
+ typedef struct {
+   I2C_CR_INSTANCE     *Instance;
+   EFI_EVENT           WorkEvent;
+@@ -86,6 +219,294 @@ MuI2cStatusToEfi (
+   }
+ }
+ 
++STATIC EFI_STATUS
++I2cCrFifoPrepare (
++  IN I2C_CR_INSTANCE *Instance,
++  IN UINT32 FrequencyKHz
++  )
++{
++  EFI_STATUS             Status;
++  EFI_CLOCK_CR_PROTOCOL *Clock;
++  UINTN                  Base;
++  UINT32 Divider;
++  UINT32 Low;
++  UINT32 High;
++  UINT32 Cycle;
++
++  if ((Instance == NULL) || (Instance->Protocol.Instance != I2C_FIFO_INSTANCE)) {
++    return EFI_UNSUPPORTED;
++  }
++  /* Clocks are shared with the GPI backend.  Enable them once, but select
++     FIFO mode on every transaction so a preceding GPI transfer cannot leave
++     GENI in DMA mode. */
++  if (!mFifoResourcesReady) {
++    Clock = NULL;
++    Status = gBS->LocateProtocol (&gEfiClockCrProtocolGuid, NULL, (VOID **)&Clock);
++    if (EFI_ERROR (Status) || (Clock == NULL) || (Clock->SetClock == NULL)) {
++      return EFI_NOT_READY;
++    }
++    Status = Clock->SetClock (Clock, "gcc", "gcc_qupv3_wrap_1_m_ahb_clk", 0, TRUE);
++    if (EFI_ERROR (Status)) return Status;
++    Status = Clock->SetClock (Clock, "gcc", "gcc_qupv3_wrap_1_s_ahb_clk", 0, TRUE);
++    if (EFI_ERROR (Status)) return Status;
++    Status = Clock->SetClock (Clock, "gcc", "gcc_qupv3_wrap1_s1_clk", 19200000, TRUE);
++    if (EFI_ERROR (Status)) return Status;
++  }
++
++  Base = (UINTN)I2C_FIFO_SE_BASE;
++  if ((MmioRead32 (Base + SE_GENI_STATUS) & BIT (0)) != 0) {
++    return EFI_NOT_READY;
++  }
++  /* Linux geni_i2c_init() requires I2C sequencer firmware and rejects
++     FIFO mode when the hardware disables that interface.  Clock/pinmux
++     setup cannot turn a SPI/UART or unloaded sequencer into I2C. */
++  if (((MmioRead32 (Base + SE_GENI_FW_REVISION_RO) >> 8) & 0xFFU) != 3U) {
++    DEBUG ((DEBUG_ERROR, "I2CCr: SE1 has no I2C firmware (FW=0x%x)\n",
++            MmioRead32 (Base + SE_GENI_FW_REVISION_RO)));
++    return EFI_UNSUPPORTED;
++  }
++  if ((MmioRead32 (Base + SE_GENI_IF_DISABLE_RO) & BIT (0)) != 0) {
++    DEBUG ((DEBUG_ERROR, "I2CCr: SE1 FIFO interface disabled; GPI required\n"));
++    return EFI_UNSUPPORTED;
++  }
++  mFifoDepth = (MmioRead32 (Base + SE_HW_PARAM_0) >> 16) & 0x3FU;
++  if (mFifoDepth < 2) return EFI_UNSUPPORTED;
++  Status = I2cCrConfigurePins ();
++  if (EFI_ERROR (Status)) return Status;
++  /* Linux geni_se_init()/geni_se_select_fifo_mode(): initialize common
++     GENI and DMA gates before selecting FIFO mode.  The MU endpoint can be
++     present without a device-config handle, so it may never run this path. */
++  MmioWrite32 (Base + SE_CGC_CTRL,
++      MmioRead32 (Base + SE_CGC_CTRL) | 0x7FU);
++  MmioWrite32 (Base + SE_DMA_GENERAL_CFG,
++      MmioRead32 (Base + SE_DMA_GENERAL_CFG) | 0x0FU);
++  MmioWrite32 (Base + SE_OUTPUT_CTRL, 0x7FU);
++  MmioWrite32 (Base + SE_FORCE_DEFAULT, BIT (0));
++  /* Linux geni_se_select_fifo_mode() quiesces GPI and clears stale IRQs. */
++  MmioWrite32 (Base + SE_GSI_EVENT_EN, 0);
++  MmioWrite32 (Base + SE_IRQ_EN, BIT (0) | BIT (1) | BIT (2) | BIT (3));
++  MmioWrite32 (Base + SE_M_IRQ_CLEAR, MAX_UINT32);
++  MmioWrite32 (Base + SE_S_IRQ_CLEAR, MAX_UINT32);
++  MmioWrite32 (Base + SE_DMA_TX_IRQ_CLEAR, MAX_UINT32);
++  MmioWrite32 (Base + SE_DMA_RX_IRQ_CLEAR, MAX_UINT32);
++  MmioWrite32 (Base + SE_DMA_MODE_EN, 0);
++  MmioWrite32 (Base + SE_TX_WATERMARK, 0);
++  MmioWrite32 (Base + SE_RX_WATERMARK, mFifoDepth - 1U);
++  MmioWrite32 (Base + SE_RX_RFR_WATERMARK, mFifoDepth);
++
++  /* geni_se_config_packing(8, 4, true, true, true). */
++  MmioWrite32 (Base + SE_TX_PACKING_CFG0, 0x0007F8FEU);
++  MmioWrite32 (Base + SE_TX_PACKING_CFG1, 0x000FFEFEU);
++  MmioWrite32 (Base + SE_RX_PACKING_CFG0, 0x0007F8FEU);
++  MmioWrite32 (Base + SE_RX_PACKING_CFG1, 0x000FFEFEU);
++  MmioWrite32 (Base + SE_BYTE_GRAN, 0);
++  /* Linux geni_i2c_clk_map_19p2mhz. */
++  if (FrequencyKHz == 100) {
++    Divider = 7; Cycle = 26; Low = 12; High = 10;
++  } else if (FrequencyKHz == 400) {
++    Divider = 2; Cycle = 22; Low = 11; High = 5;
++  } else {
++    Divider = 1; Cycle = 18; Low = 8; High = 2;
++  }
++  MmioWrite32 (Base + SE_CLK_SEL, 0);
++  MmioWrite32 (Base + 0x048U, (Divider << 4) | BIT (0));
++  MmioWrite32 (Base + 0x278U, Cycle | (Low << 10) | (High << 20));
++  MmioWrite32 (Base + SE_M_IRQ_EN,
++      SE_M_CMD_DONE | SE_M_CMD_OVERRUN | SE_M_ILLEGAL_CMD |
++      SE_M_CMD_FAILURE | SE_M_CMD_ABORT | SE_M_GP_IRQ_0 | SE_M_GP_IRQ_1 |
++      SE_M_GP_IRQ_3 | SE_M_GP_IRQ_4 |
++      SE_M_RX_FIFO_WATERMARK | SE_M_RX_FIFO_LAST | SE_M_TX_FIFO_WATERMARK);
++  mFifoResourcesReady = TRUE;
++  return EFI_SUCCESS;
++}
++
++STATIC EFI_STATUS
++I2cCrFifoTransaction (
++  IN  UINT32       SlaveAddress,
++  IN  UINT32       Command,
++  IN  UINT32       Parameters,
++  IN  CONST UINT8 *TxBuffer OPTIONAL,
++  IN  UINT32       TxLength,
++  OUT UINT8       *RxBuffer OPTIONAL,
++  IN  UINT32       RxLength
++  )
++{
++  UINTN  Base;
++  UINT32 TxWords;
++  UINT32 TxWord;
++  UINT32 TxIndex;
++  UINT32 RxIndex;
++  UINT32 Elapsed;
++  UINT32 Status;
++  UINT32 ErrorStatus;
++
++  if ((SlaveAddress > 0x7FU) || (TxLength > I2C_CR_MAX_TRANSFER_BYTES) ||
++      (RxLength > I2C_CR_MAX_TRANSFER_BYTES) ||
++      ((TxLength != 0) && (TxBuffer == NULL)) ||
++      ((RxLength != 0) && (RxBuffer == NULL))) {
++    return EFI_INVALID_PARAMETER;
++  }
++  Base = (UINTN)I2C_FIFO_SE_BASE;
++  TxWords = (TxLength + 3U) / 4U;
++  TxIndex = 0;
++  RxIndex = 0;
++
++  MmioWrite32 (Base + SE_M_IRQ_CLEAR, MAX_UINT32);
++  MmioWrite32 (Base + SE_I2C_TX_LEN, TxLength);
++  MmioWrite32 (Base + SE_I2C_RX_LEN, RxLength);
++
++  MmioWrite32 (Base + SE_M_CMD0,
++      (Command << 27) | Parameters |
++      ((SlaveAddress & 0x7FU) << I2C_SLAVE_ADDR_SHIFT));
++
++  for (Elapsed = 0; Elapsed < I2C_FIFO_TIMEOUT_US; Elapsed += 10U) {
++    Status = MmioRead32 (Base + SE_M_IRQ_STATUS);
++    ErrorStatus = Status & SE_M_I2C_ERROR_MASK;
++    /* Linux geni_i2c_check_addr_data_nack(): GP_LENGTH zero is an address
++       NACK; nonzero is a data NACK, which is an error only for writes.
++       CMD_FAILURE is the summary for that GP cause, so discard it together
++       with GP_IRQ1 for a read data NACK, retaining every independent error. */
++    if ((Command == I2C_CMD_READ) && ((Status & SE_M_GP_IRQ_1) != 0) &&
++        (MmioRead32 (Base + SE_M_GP_LENGTH) != 0)) {
++      ErrorStatus &= ~(SE_M_GP_IRQ_1 | SE_M_CMD_FAILURE);
++    }
++    if (ErrorStatus != 0) {
++      DEBUG ((DEBUG_ERROR, "I2CCr FIFO: command 0x%x IRQ=0x%x GENI=0x%x\n",
++              Command, Status, MmioRead32 (Base + SE_GENI_STATUS)));
++      return EFI_DEVICE_ERROR;
++    }
++    if (TxIndex < TxWords) {
++      UINT32 Used = MmioRead32 (Base + SE_TX_FIFO_STATUS) & SE_TX_FIFO_WC_MASK;
++      if (Used > mFifoDepth) return EFI_DEVICE_ERROR;
++      while ((Used < mFifoDepth) && (TxIndex < TxWords)) {
++        UINT32 Byte;
++        TxWord = 0;
++        for (Byte = 0; (Byte < 4) && (TxIndex * 4U + Byte < TxLength); ++Byte)
++          TxWord |= (UINT32)TxBuffer[TxIndex * 4U + Byte] << (Byte * 8U);
++        MmioWrite32 (Base + SE_TX_FIFO, TxWord);
++        ++TxIndex;
++        ++Used;
++      }
++    }
++    if (RxIndex < RxLength) {
++      UINT32 RxWords = MmioRead32 (Base + SE_RX_FIFO_STATUS) & SE_RX_FIFO_WC_MASK;
++      while ((RxWords != 0) && (RxIndex < RxLength)) {
++        UINT32 Word = MmioRead32 (Base + SE_RX_FIFO);
++        UINT32 Byte;
++        for (Byte = 0; (Byte < 4U) && (RxIndex < RxLength); ++Byte) {
++          RxBuffer[RxIndex++] = (UINT8)(Word >> (Byte * 8U));
++        }
++        RxWords--;
++      }
++    }
++    if ((Status & SE_M_CMD_DONE) != 0) {
++      MmioWrite32 (Base + SE_M_IRQ_CLEAR, Status);
++      if ((RxIndex != RxLength) || (TxIndex != TxWords)) {
++        DEBUG ((DEBUG_ERROR, "I2CCr FIFO: short command 0x%x TX=%u/%u RX=%u/%u\n",
++                Command, TxIndex, TxWords, RxIndex, RxLength));
++      }
++      return ((RxIndex == RxLength) && (TxIndex == TxWords)) ?
++          EFI_SUCCESS : EFI_DEVICE_ERROR;
++    }
++    MicroSecondDelay (10);
++  }
++  DEBUG ((DEBUG_ERROR, "I2CCr FIFO: command 0x%x timed out IRQ=0x%x GENI=0x%x\n",
++          Command, Status, MmioRead32 (Base + SE_GENI_STATUS)));
++  return EFI_TIMEOUT;
++}
++
++STATIC EFI_STATUS
++I2cCrFifoQuiesce (IN BOOLEAN Failed)
++{
++  UINTN Base = (UINTN)I2C_FIFO_SE_BASE;
++  UINT32 Elapsed;
++  /* An error after STOP_STRETCH may hold SCL even when CMD_ACTIVE cleared.
++     Always issue abort on an error, and wait for its acknowledgement. */
++  if (Failed || ((MmioRead32 (Base + SE_GENI_STATUS) & BIT (0)) != 0)) {
++    MmioWrite32 (Base + SE_M_IRQ_CLEAR, SE_M_CMD_ABORT);
++    MmioWrite32 (Base + SE_M_CMD_CTRL, SE_M_GENI_CMD_ABORT);
++    for (Elapsed = 0; Elapsed < I2C_FIFO_TIMEOUT_US; Elapsed += 10) {
++      if (((MmioRead32 (Base + SE_M_IRQ_STATUS) & SE_M_CMD_ABORT) != 0) &&
++          ((MmioRead32 (Base + SE_GENI_STATUS) & BIT (0)) == 0)) break;
++      MicroSecondDelay (10);
++    }
++    if (Elapsed == I2C_FIFO_TIMEOUT_US) return EFI_TIMEOUT;
++  }
++  MmioWrite32 (Base + SE_M_IRQ_CLEAR, MAX_UINT32);
++  return EFI_SUCCESS;
++}
++
++STATIC EFI_STATUS EFIAPI
++I2cCrFifoMuTransfer (
++  IN EFI_I2C_CR_PROTOCOL *This, IN MU_I2C_SLAVE_CONFIG *Config,
++  IN MU_I2C_DESCRIPTOR *Descriptors, IN UINT16 DescriptorCount,
++  IN MU_I2C_CALLBACK Callback OPTIONAL, IN VOID *Context OPTIONAL,
++  IN UINT32 Delay, OUT UINT32 *Transferred OPTIONAL)
++{
++  I2C_CR_INSTANCE *Instance = I2cCrInstanceFromProtocol (This);
++  EFI_STATUS Status;
++  EFI_STATUS Cleanup;
++  UINT64 Requested = 0;
++  UINT32 Total = 0;
++  UINT16 Index;
++  BOOLEAN Prepared = FALSE;
++  if (Transferred != NULL) *Transferred = 0;
++  if ((Instance == NULL) || (Config == NULL) || (Descriptors == NULL) ||
++      (DescriptorCount == 0) || (Config->SlaveAddress > 0x7F))
++    return EFI_INVALID_PARAMETER;
++  if ((Callback != NULL) || (Context != NULL) || (Delay != 0) ||
++      (Config->Mode != MU_I2C_MODE_I2C) ||
++      ((Config->BusFrequencyKHz != 100) && (Config->BusFrequencyKHz != 400) &&
++       (Config->BusFrequencyKHz != 1000))) return EFI_UNSUPPORTED;
++  if (Instance->Protocol.Instance != I2C_FIFO_INSTANCE) return EFI_UNSUPPORTED;
++  for (Index = 0; Index < DescriptorCount; ++Index) {
++    UINT32 Flags = Descriptors[Index].Flags;
++    if ((Descriptors[Index].Buffer == NULL) || (Descriptors[Index].Length == 0) ||
++        ((Flags & ~(MU_I2C_FLAG_START | MU_I2C_FLAG_STOP |
++                    MU_I2C_FLAG_WRITE | MU_I2C_FLAG_READ)) != 0) ||
++        ((Flags & MU_I2C_FLAG_START) == 0) ||
++        (((Flags & MU_I2C_FLAG_READ) != 0) == ((Flags & MU_I2C_FLAG_WRITE) != 0)) ||
++        ((Index + 1 == DescriptorCount) && ((Flags & MU_I2C_FLAG_STOP) == 0)))
++      return EFI_INVALID_PARAMETER;
++    Requested += Descriptors[Index].Length;
++    if (Requested > I2C_CR_MAX_TRANSFER_BYTES) return EFI_BAD_BUFFER_SIZE;
++  }
++  if (InterlockedCompareExchange32 (&Instance->Busy, 0, 1) != 0)
++    return EFI_ALREADY_STARTED;
++  Status = gBS->LocateProtocol (&gEfiQupCrProtocolGuid, NULL, (VOID **)&mFifoQup);
++  if (EFI_ERROR (Status) || (mFifoQup == NULL) ||
++      (mFifoQup->Revision < EFI_QUP_CR_PROTOCOL_REVISION) ||
++      (mFifoQup->AcquireSe == NULL) || (mFifoQup->ReleaseSe == NULL)) {
++    Status = EFI_NOT_READY;
++    goto Done;
++  }
++  Status = mFifoQup->AcquireSe (mFifoQup, 1, 1, Instance, QupCrSeFifo);
++  if (EFI_ERROR (Status)) goto Done;
++  Status = I2cCrFifoPrepare (Instance, Config->BusFrequencyKHz);
++  Prepared = !EFI_ERROR (Status);
++  for (Index = 0; !EFI_ERROR (Status) && (Index < DescriptorCount); ++Index) {
++    BOOLEAN Read = (Descriptors[Index].Flags & MU_I2C_FLAG_READ) != 0;
++    Status = I2cCrFifoTransaction (
++        Config->SlaveAddress, Read ? I2C_CMD_READ : I2C_CMD_WRITE,
++        (Descriptors[Index].Flags & MU_I2C_FLAG_STOP) == 0 ? I2C_STOP_STRETCH : 0,
++        Read ? NULL : Descriptors[Index].Buffer,
++        Read ? 0 : Descriptors[Index].Length,
++        Read ? Descriptors[Index].Buffer : NULL,
++        Read ? Descriptors[Index].Length : 0);
++    if (!EFI_ERROR (Status)) Total += Descriptors[Index].Length;
++  }
++  Cleanup = Prepared ? I2cCrFifoQuiesce (EFI_ERROR (Status)) : EFI_SUCCESS;
++  mFifoQup->ReleaseSe (mFifoQup, 1, 1, Instance, !EFI_ERROR (Cleanup));
++  if (EFI_ERROR (Cleanup)) {
++    DEBUG ((DEBUG_ERROR, "I2CCr: quiesce failed %r; SE fenced\n", Cleanup));
++    if (!EFI_ERROR (Status)) Status = Cleanup;
++  }
++Done:
++  InterlockedCompareExchange32 (&Instance->Busy, 1, 0);
++  if (Transferred != NULL) *Transferred = Total;
++  return Status;
++}
++
+ STATIC I2C_CR_INSTANCE *
+ I2cCrInstanceFromProtocol (
+   IN EFI_I2C_CR_PROTOCOL *This
+@@ -296,8 +717,18 @@ I2cCrMuTransfer (
+   OUT UINT32             *Transferred OPTIONAL
+   )
+ {
++  I2C_CR_INSTANCE *Instance;
++
++  Instance = I2cCrInstanceFromProtocol (This);
++  /* Linux i2c9 is explicitly switched into GENI FIFO mode here. */
++  if ((Instance != NULL) && (Instance->Protocol.FifoTransfer != NULL) &&
++      (Instance->Protocol.Instance == I2C_FIFO_INSTANCE)) {
++    return Instance->Protocol.FifoTransfer (
++        This, Config, Descriptors, DescriptorCount,
++        Callback, Context, Delay, Transferred);
++  }
+   return I2cCrSubmit (
+-      I2cCrInstanceFromProtocol (This), Config, Descriptors, DescriptorCount,
++      Instance, Config, Descriptors, DescriptorCount,
+       Callback, Context, NULL, NULL, Delay, Transferred);
+ }
+ 
+@@ -440,10 +871,21 @@ I2cCrStartRequest (
+     }
+   }
+   if (!EFI_ERROR (Status)) {
+-    Status = I2cCrSubmit (
+-        Instance, &Config, Descriptors,
+-        (UINT16)RequestPacket->OperationCount,
+-        NULL, NULL, Event, I2cStatus, 0, NULL);
++    if ((Instance->Protocol.FifoTransfer != NULL) &&
++        (Instance->Protocol.Instance == I2C_FIFO_INSTANCE)) {
++      UINT32 Transferred;
++      Transferred = 0;
++      Status = (Event != NULL) ? EFI_UNSUPPORTED : Instance->Protocol.FifoTransfer (
++          &Instance->Protocol, &Config, Descriptors,
++          (UINT16)RequestPacket->OperationCount,
++          NULL, NULL, 0, &Transferred);
++      if (I2cStatus != NULL) *I2cStatus = Status;
++    } else {
++      Status = I2cCrSubmit (
++          Instance, &Config, Descriptors,
++          (UINT16)RequestPacket->OperationCount,
++          NULL, NULL, Event, I2cStatus, 0, NULL);
++    }
+   }
+   FreePool (Descriptors);
+   return Status;
+@@ -459,6 +901,7 @@ I2cCrInitializeProtocol (
+   Protocol->Reset           = I2cCrReset;
+   Protocol->StartRequest    = I2cCrStartRequest;
+   Protocol->MuTransfer      = I2cCrMuTransfer;
++  Protocol->FifoTransfer    = I2cCrFifoMuTransfer;
+ }
+ 
+ STATIC EFI_STATUS
+@@ -548,17 +991,39 @@ I2CCrEntryPoint (
+   if (mInstances != NULL) {
+     return EFI_ALREADY_STARTED;
+   }
+-  Status = I2cCrInstallStandardInstances (ImageHandle);
+-  if (Status != EFI_NOT_FOUND) {
+-    return Status;
++  {
++    EFI_QUP_CR_PROTOCOL *Qup = NULL;
++    CONST CR_TARGET_QUP_WRAPPER *Wrapper = NULL;
++    Status = gBS->LocateProtocol (&gEfiQupCrProtocolGuid, NULL, (VOID **)&Qup);
++    if (!EFI_ERROR (Status) && (Qup != NULL) &&
++        (Qup->Revision >= EFI_QUP_CR_PROTOCOL_REVISION) &&
++        (Qup->GetWrapper != NULL) &&
++        !EFI_ERROR (Qup->GetWrapper (Qup, 1, &Wrapper)) && (Wrapper != NULL) &&
++        (Wrapper->SerialEngineCount > 1) &&
++        (Wrapper->SerialEngineBase[1] == I2C_FIFO_SE_BASE)) {
++      mInstances = AllocateZeroPool (sizeof (*mInstances));
++      if (mInstances == NULL) return EFI_OUT_OF_RESOURCES;
++      I2cCrInitializeProtocol (&mInstances->Protocol);
++      mInstances->Protocol.Instance = I2C_FIFO_INSTANCE;
++      mInstances->Protocol.BusFrequencyKHz = I2C_CR_DEFAULT_FREQUENCY_KHZ;
++      mInstances->Protocol.I2cControllerCapabilities = &mI2cCapabilities;
++      Status = gBS->InstallMultipleProtocolInterfaces (
++          &mInstances->AliasHandle, &gEfiI2cCrProtocolGuid, &mInstances->Protocol, NULL);
++      if (EFI_ERROR (Status)) { FreePool (mInstances); mInstances = NULL; }
++      return Status;
++    }
+   }
++  /* Prefer MU's instance-aware adapter whenever it is published.  A platform
++     may also expose a PI master, but that alias has no instance identity and
++     cannot select HDK8450's Linux i2c9 FIFO/GPI engine for LT9611. */
+   Status = gBS->LocateProtocol (
+       &gQcomI2CProtocolGuid, NULL, (VOID **)&MuI2c);
+   if (EFI_ERROR (Status) || (MuI2c == NULL) ||
+       (MuI2c->Revision < MU_I2C_PROTOCOL_REVISION) ||
+       (MuI2c->Open == NULL) || (MuI2c->Transfer == NULL) ||
+       (MuI2c->Close == NULL)) {
+-    return EFI_NOT_FOUND;
++    Status = I2cCrInstallStandardInstances (ImageHandle);
++    return (Status == EFI_NOT_FOUND) ? EFI_NOT_FOUND : Status;
+   }
+ 
+   mInstances = AllocateZeroPool (
+diff --git a/Driver/I2CCrDxe/I2CCrDxe.inf b/Driver/I2CCrDxe/I2CCrDxe.inf
+index 6a03407..673e72e 100644
+--- a/Driver/I2CCrDxe/I2CCrDxe.inf
++++ b/Driver/I2CCrDxe/I2CCrDxe.inf
+@@ -14,9 +14,13 @@
+   CranePkg/CranePkg.dec
+ 
+ [LibraryClasses]
++  BaseLib
+   BaseMemoryLib
++  DebugLib
++  IoLib
+   MemoryAllocationLib
+   SynchronizationLib
++  TimerLib
+   UefiBootServicesTableLib
+   UefiDriverEntryPoint
+ 
+@@ -24,10 +28,12 @@
+   gEfiI2cMasterProtocolGuid     ## CONSUMES (optional PI backend)
+   gQcomI2CProtocolGuid          ## CONSUMES (MU I2CDxe)
+   gEfiQupCrProtocolGuid         ## CONSUMES
++  gEfiClockCrProtocolGuid       ## CONSUMES
++  gEfiGpioCrProtocolGuid        ## CONSUMES (optional pinmux)
+   gEfiGpiCrProtocolGuid         ## CONSUMES
+   gEfiInterconnectCrProtocolGuid ## CONSUMES
+   gEfiI2cCrProtocolGuid         ## PRODUCES
+ 
+ [Depex]
+-  ( gQcomI2CProtocolGuid OR gEfiI2cMasterProtocolGuid ) AND gEfiQupCrProtocolGuid AND
+-  gEfiGpiCrProtocolGuid AND gEfiInterconnectCrProtocolGuid
++  gEfiQupCrProtocolGuid AND
++  gEfiGpiCrProtocolGuid AND gEfiInterconnectCrProtocolGuid AND gEfiClockCrProtocolGuid
+diff --git a/Driver/QUPCrDxe/QUPCrDxe.c b/Driver/QUPCrDxe/QUPCrDxe.c
+index e7fc016..57138fc 100644
+--- a/Driver/QUPCrDxe/QUPCrDxe.c
++++ b/Driver/QUPCrDxe/QUPCrDxe.c
+@@ -1,9 +1,8 @@
+ /** @file
+- *  QUPv3 target-resource protocol producer.
++ *  QUPv3 target-resource protocol and shared serial-engine arbitration.
+  *
+- *  This module deliberately does not touch QUP registers.  The MU QUP/GENI
+- *  stack remains the sole hardware owner; Crane consumers use the published
+- *  Linux-derived resource contract to sequence their dependencies.
++ *  This module does not touch QUP registers. Native FIFO and GPI clients use
++ *  one shared lease per serial engine before changing its operating mode.
+  *
+  *  SPDX-License-Identifier: MIT
+  */
+@@ -12,6 +11,7 @@
+ 
+ #include <Library/BaseLib.h>
+ #include <Library/CrDalLib.h>
++#include <Library/SynchronizationLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/UefiDriverEntryPoint.h>
+ 
+@@ -20,6 +20,15 @@
+ #include <Protocol/EFIQupCrProtocol.h>
+ 
+ STATIC CONST CR_TARGET_QUP_CONTEXT *mQupContext;
++STATIC EFI_QUP_CR_PROTOCOL mQupProtocol;
++/* Indexed by wrapper ID; entries are validated against target metadata. */
++typedef struct {
++  volatile UINT32 Busy;
++  VOID *Owner;
++  EFI_QUP_CR_SE_MODE Mode;
++  BOOLEAN Poisoned;
++} QUP_SE_OWNER;
++STATIC QUP_SE_OWNER mSeOwners[256][CR_TARGET_QUP_MAX_SERIAL_ENGINES];
+ 
+ STATIC EFI_STATUS
+ EFIAPI
+@@ -61,10 +70,51 @@ QupGetContext (
+   return EFI_SUCCESS;
+ }
+ 
++STATIC EFI_STATUS EFIAPI
++QupAcquireSe (IN EFI_QUP_CR_PROTOCOL *This, IN UINT8 WrapperId,
++              IN UINT8 Engine, IN VOID *Owner, IN EFI_QUP_CR_SE_MODE Mode)
++{
++  CONST CR_TARGET_QUP_WRAPPER *Wrapper;
++  QUP_SE_OWNER *Slot;
++  if ((This != &mQupProtocol) || (Owner == NULL) ||
++      ((Mode != QupCrSeFifo) && (Mode != QupCrSeGpi))) return EFI_INVALID_PARAMETER;
++  if (EFI_ERROR (QupGetWrapper (This, WrapperId, &Wrapper)) ||
++      (Engine >= CR_TARGET_QUP_MAX_SERIAL_ENGINES) ||
++      (Engine >= Wrapper->SerialEngineCount) ||
++      (Wrapper->SerialEngineBase[Engine] == 0)) return EFI_NOT_FOUND;
++  Slot = &mSeOwners[WrapperId][Engine];
++  if (InterlockedCompareExchange32 (&Slot->Busy, 0, 1) != 0) {
++    return Slot->Poisoned ? EFI_DEVICE_ERROR : EFI_ALREADY_STARTED;
++  }
++  Slot->Owner = Owner;
++  Slot->Mode = Mode;
++  return EFI_SUCCESS;
++}
++
++STATIC EFI_STATUS EFIAPI
++QupReleaseSe (IN EFI_QUP_CR_PROTOCOL *This, IN UINT8 WrapperId,
++              IN UINT8 Engine, IN VOID *Owner, IN BOOLEAN Quiesced)
++{
++  QUP_SE_OWNER *Slot;
++  if ((This != &mQupProtocol) || (Owner == NULL) ||
++      (Engine >= CR_TARGET_QUP_MAX_SERIAL_ENGINES)) return EFI_INVALID_PARAMETER;
++  Slot = &mSeOwners[WrapperId][Engine];
++  if ((Slot->Busy == 0) || (Slot->Owner != Owner)) return EFI_ACCESS_DENIED;
++  if (Slot->Poisoned || !Quiesced) {
++    Slot->Poisoned = TRUE;
++    return EFI_DEVICE_ERROR;
++  }
++  Slot->Owner = NULL;
++  InterlockedCompareExchange32 (&Slot->Busy, 1, 0);
++  return EFI_SUCCESS;
++}
++
+ STATIC EFI_QUP_CR_PROTOCOL mQupProtocol = {
+   .Revision   = EFI_QUP_CR_PROTOCOL_REVISION,
+   .GetWrapper = QupGetWrapper,
+   .GetContext = QupGetContext,
++  .AcquireSe = QupAcquireSe,
++  .ReleaseSe = QupReleaseSe,
+ };
+ 
+ EFI_STATUS
+diff --git a/Driver/QUPCrDxe/QUPCrDxe.inf b/Driver/QUPCrDxe/QUPCrDxe.inf
+index 3d2dadd..08cb612 100644
+--- a/Driver/QUPCrDxe/QUPCrDxe.inf
++++ b/Driver/QUPCrDxe/QUPCrDxe.inf
+@@ -15,6 +15,7 @@
+ 
+ [LibraryClasses]
+   BaseLib
++  SynchronizationLib
+   CrDalLib
+   UefiBootServicesTableLib
+   UefiDriverEntryPoint
+diff --git a/Driver/RpmhCrDxe/RpmhCrDxe.c b/Driver/RpmhCrDxe/RpmhCrDxe.c
+index 3acf099..e3dc1e4 100644
+--- a/Driver/RpmhCrDxe/RpmhCrDxe.c
++++ b/Driver/RpmhCrDxe/RpmhCrDxe.c
+@@ -33,6 +33,8 @@ typedef struct {
+   BOOLEAN            ModeRequested;
+   BOOLEAN            EnableRequested;
+   UINTN              ReferenceCount;
++  UINT32             VoltageMv;
++  UINT8              Mode;
+ } RPMH_CR_RAIL;
+ 
+ STATIC EFI_NPA_PROTOCOL  *mNpa;
+@@ -501,6 +503,11 @@ ProtocolRpmhSetVregVoltage (
+     return EFI_NOT_FOUND;
+   }
+ 
++  if (Rail->ReferenceCount != 0) {
++    Status = Rail->VoltageMv == VoltageMv ? EFI_SUCCESS : EFI_ACCESS_DENIED;
++    EfiReleaseLock (&mRailLock);
++    return Status;
++  }
+   Status = IssueVote (
+              Rail->VoltageClient,
+              VoltageMv,
+@@ -510,6 +517,7 @@ ProtocolRpmhSetVregVoltage (
+     log_err ("RPMh: voltage rail %a (%u mV) failed: %r",
+              Name, VoltageMv, Status);
+   }
++  if (!EFI_ERROR (Status)) { Rail->VoltageMv = VoltageMv; }
+   EfiReleaseLock (&mRailLock);
+   return Status;
+ }
+@@ -542,10 +550,75 @@ ProtocolRpmhSetVregMode (
+     return EFI_NOT_FOUND;
+   }
+ 
++  if (Rail->ReferenceCount != 0) {
++    Status = Rail->Mode == Mode ? EFI_SUCCESS : EFI_ACCESS_DENIED;
++    EfiReleaseLock (&mRailLock);
++    return Status;
++  }
+   Status = IssueVote (Rail->ModeClient, Mode, &Rail->ModeRequested);
+   if (EFI_ERROR (Status)) {
+     log_err ("RPMh: mode rail %a (%u) failed: %r", Name, Mode, Status);
+   }
++  if (!EFI_ERROR (Status)) { Rail->Mode = Mode; }
++  EfiReleaseLock (&mRailLock);
++  return Status;
++}
++
++EFI_STATUS
++EFIAPI
++ProtocolRpmhAcquireVreg (
++  IN EFI_RPMH_CR_PROTOCOL *This,
++  IN CONST CHAR8 *Name,
++  IN UINT32 VoltageMv,
++  IN UINT8 Mode,
++  OUT BOOLEAN *Owned
++  )
++{
++  RPMH_CR_RAIL *Rail;
++  EFI_STATUS Status;
++  (VOID)This;
++  if (Owned == NULL) { return EFI_INVALID_PARAMETER; }
++  *Owned = FALSE;
++  if (Name == NULL || VoltageMv == 0 || VoltageMv > 0xFFFFU ||
++      ((Mode != 2) && (Mode != 3) && (Mode != 4) && (Mode != 6) && (Mode != 7))) {
++    return EFI_INVALID_PARAMETER;
++  }
++  EfiAcquireLock (&mRailLock);
++  Rail = FindRail (Name);
++  if (Rail == NULL) { Status = EFI_NOT_FOUND; goto Exit; }
++  if (Rail->ReferenceCount == MAX_UINTN) {
++    Status = EFI_OUT_OF_RESOURCES; goto Exit;
++  }
++  if (Rail->ReferenceCount != 0) {
++    if (Rail->VoltageMv != VoltageMv || Rail->Mode != Mode ||
++        !Rail->EnableRequested) {
++      Status = EFI_ACCESS_DENIED; goto Exit;
++    }
++    Rail->ReferenceCount++;
++    *Owned = TRUE;
++    Status = EFI_SUCCESS;
++    goto Exit;
++  }
++  /* A previous failed transaction must finish its release before reuse. */
++  if (Rail->VoltageRequested || Rail->ModeRequested || Rail->EnableRequested) {
++    Status = EFI_NOT_READY; goto Exit;
++  }
++  Rail->ReferenceCount = 1;
++  Rail->VoltageMv = 0;
++  Rail->Mode = 0;
++  *Owned = TRUE;
++  Status = IssueVote (Rail->VoltageClient, VoltageMv, &Rail->VoltageRequested);
++  if (EFI_ERROR (Status)) { goto Exit; }
++  Rail->VoltageMv = VoltageMv;
++  Status = IssueVote (Rail->ModeClient, Mode, &Rail->ModeRequested);
++  if (EFI_ERROR (Status)) { goto Exit; }
++  Rail->Mode = Mode;
++  Status = IssueVote (Rail->EnableClient, 1, &Rail->EnableRequested);
++  if (EFI_ERROR (Status)) {
++    /* Do not allow a second consumer to adopt an uncertain enable. */
++    Rail->Mode = 0;
++  }
++Exit:
+   EfiReleaseLock (&mRailLock);
+   return Status;
+ }
+@@ -556,6 +629,7 @@ EFI_RPMH_CR_PROTOCOL  gRpmhCrProtocol = {
+   .RpmhEnableVreg     = ProtocolRpmhEnableVreg,
+   .RpmhSetVregVoltage = ProtocolRpmhSetVregVoltage,
+   .RpmhSetVregMode    = ProtocolRpmhSetVregMode,
++  .AcquireVreg        = ProtocolRpmhAcquireVreg,
+ };
+ 
+ EFI_STATUS
+diff --git a/Include/CrDalDevice.h b/Include/CrDalDevice.h
+index 251b1e4..31a0a78 100644
+--- a/Include/CrDalDevice.h
++++ b/Include/CrDalDevice.h
+@@ -128,6 +128,8 @@ typedef struct {
+   UINT16        InterruptPin;
+   UINTN         PowerPinCount;
+   CONST UINT16 *PowerPins;
++  UINT32        I2cInstance;
++  UINT8         I2cAddress;
+ } CR_DAL_LT9611_CONFIG;
+ 
+ #endif
+diff --git a/Include/Library/CrTargetQupLib.h b/Include/Library/CrTargetQupLib.h
+index c62b4e0..ca7fae0 100644
+--- a/Include/Library/CrTargetQupLib.h
++++ b/Include/Library/CrTargetQupLib.h
+@@ -1,8 +1,8 @@
+ /** @file
+  *  SM8450 QUPv3/GENI and GPI target description.
+  *
+- *  The descriptor mirrors the Linux device-tree resources.  It is metadata
+- * only: the MU QUP/GPI binaries remain the owners of controller programming.
++ *  The descriptor mirrors the Linux device-tree resources.  GpiCrDxe owns the
++ *  GPI-DMA registers for the explicitly supported I2C endpoint.
+  *
+  *  SPDX-License-Identifier: MIT
+  */
+diff --git a/Include/Protocol/EFIClockCrProtocol.h b/Include/Protocol/EFIClockCrProtocol.h
+index 2ab7e1b..997f5a5 100644
+--- a/Include/Protocol/EFIClockCrProtocol.h
++++ b/Include/Protocol/EFIClockCrProtocol.h
+@@ -6,7 +6,7 @@
+ 
+ #pragma once
+ 
+-#define EFI_CLOCK_CR_PROTOCOL_REVISION 0x0000000000010000
++#define EFI_CLOCK_CR_PROTOCOL_REVISION 0x0000000000010001
+ 
+ #define EFI_CLOCK_CR_PROTOCOL_GUID                                             \
+   {0xa355879b, 0x66c2, 0x4901, {0xb9, 0xa5, 0xc3, 0x0f, 0x31, 0x91, 0x81, 0xc8}}
+@@ -26,9 +26,20 @@ typedef EFI_STATUS(EFIAPI *EFI_CLOCK_CR_SET_RESET)(
+     IN EFI_CLOCK_CR_PROTOCOL *This, IN CONST CHAR8 *Controller,
+     IN CONST CHAR8 *Id, IN BOOLEAN Assert);
+ 
++typedef EFI_STATUS(EFIAPI *EFI_CLOCK_CR_CONFIGURE_EXTERNAL_SOURCE)(
++    IN EFI_CLOCK_CR_PROTOCOL *This, IN CONST CHAR8 *Controller,
++    IN CONST CHAR8 *Id, IN UINT32 RateHz, IN UINT32 Source,
++    IN UINT32 Divider, IN UINT32 M, IN UINT32 N, IN UINT32 TwiceD);
++
++typedef EFI_STATUS(EFIAPI *EFI_CLOCK_CR_SET_DIVIDER)(
++    IN EFI_CLOCK_CR_PROTOCOL *This, IN CONST CHAR8 *Controller,
++    IN CONST CHAR8 *Id, IN UINT32 Divider);
++
+ typedef struct _EFI_CLOCK_CR_PROTOCOL {
+   UINT64                  Revision;
+   EFI_CLOCK_CR_SET_CLOCK  SetClock;
+   EFI_CLOCK_CR_SET_GDSC   SetGdsc;
+   EFI_CLOCK_CR_SET_RESET  SetReset;
++  EFI_CLOCK_CR_CONFIGURE_EXTERNAL_SOURCE ConfigureExternalSource;
++  EFI_CLOCK_CR_SET_DIVIDER SetDivider;
+ } EFI_CLOCK_CR_PROTOCOL;
+diff --git a/Include/Protocol/EFIGpiCrProtocol.h b/Include/Protocol/EFIGpiCrProtocol.h
+index bcde4c3..b697ce6 100644
+--- a/Include/Protocol/EFIGpiCrProtocol.h
++++ b/Include/Protocol/EFIGpiCrProtocol.h
+@@ -1,23 +1,34 @@
+ /** @file
+- *  Read-only GPI DMA target resource protocol.
++ *  Linux-compatible GPI DMA target and I2C transfer protocol.
+  *
+- *  The MU GpiDxe owns DMA programming.  Crane consumers use this protocol to
+- *  discover the Linux-compatible controller/SID/IRQ contract.
++ *  GpiCrDxe owns the explicitly supported Linux GPI-DMA endpoint.  The
++ *  transfer entry point is intentionally separate from PI I2C because one
++ *  GENI serial engine can only be in FIFO or GPI mode at a time.
+  *
+  *  SPDX-License-Identifier: MIT
+  */
+ #pragma once
+ 
+-#include <Protocol/EFIMuBusProtocol.h>
+ #include <Library/CrTargetQupLib.h>
+ 
+-#define EFI_GPI_CR_PROTOCOL_REVISION  0x0000000000010001ULL
++#define EFI_GPI_CR_PROTOCOL_REVISION  0x0000000000010002ULL
+ #define EFI_GPI_CR_PROTOCOL_GUID \
+   { 0x9f2f4a76, 0x5c8e, 0x4a0e, { 0x91, 0x43, 0x2b, 0x70, 0x8c, 0x6d, 0x4e, 0x12 } }
+ 
+ extern EFI_GUID gEfiGpiCrProtocolGuid;
+ typedef struct _EFI_GPI_CR_PROTOCOL EFI_GPI_CR_PROTOCOL;
+ 
++typedef struct {
++  UINT8   *Buffer;
++  UINT32   Length;
++  UINT32   Flags;
++} EFI_GPI_I2C_DESCRIPTOR;
++
++#define EFI_GPI_I2C_FLAG_START  0x00000001U
++#define EFI_GPI_I2C_FLAG_STOP   0x00000002U
++#define EFI_GPI_I2C_FLAG_WRITE  0x00000004U
++#define EFI_GPI_I2C_FLAG_READ   0x00000008U
++
+ typedef EFI_STATUS (EFIAPI *EFI_GPI_CR_GET_CONTROLLER)(
+   IN  EFI_GPI_CR_PROTOCOL               *This,
+   IN  UINT8                              ControllerId,
+@@ -29,15 +40,18 @@ typedef EFI_STATUS (EFIAPI *EFI_GPI_CR_GET_CONTEXT)(
+   OUT CONST CR_TARGET_QUP_CONTEXT **Context
+   );
+ 
+-typedef EFI_STATUS (EFIAPI *EFI_GPI_CR_GET_MU_PROTOCOL)(
+-  IN  EFI_GPI_CR_PROTOCOL *This,
+-  OUT MU_GPI_PROTOCOL     **Protocol
++typedef EFI_STATUS (EFIAPI *EFI_GPI_CR_I2C_TRANSFER)(
++  IN  EFI_GPI_CR_PROTOCOL       *This,
++  IN  UINT32                    Instance,
++  IN  UINT16                    SlaveAddress,
++  IN  EFI_GPI_I2C_DESCRIPTOR   *Descriptors,
++  IN  UINT16                    DescriptorCount,
++  OUT UINT32                    *Transferred OPTIONAL
+   );
+ 
+ typedef struct _EFI_GPI_CR_PROTOCOL {
+   UINT64                         Revision;
+   EFI_GPI_CR_GET_CONTROLLER     GetController;
+   EFI_GPI_CR_GET_CONTEXT        GetContext;
+-  EFI_GPI_CR_GET_MU_PROTOCOL    GetMuProtocol;
+-  MU_GPI_PROTOCOL              *MuProtocol;
++  EFI_GPI_CR_I2C_TRANSFER       I2cTransfer;
+ } EFI_GPI_CR_PROTOCOL;
+diff --git a/Include/Protocol/EFII2cCrProtocol.h b/Include/Protocol/EFII2cCrProtocol.h
+index b8f971b..521a9e2 100644
+--- a/Include/Protocol/EFII2cCrProtocol.h
++++ b/Include/Protocol/EFII2cCrProtocol.h
+@@ -62,4 +62,6 @@ typedef struct _EFI_I2C_CR_PROTOCOL {
+   VOID                           *QcomHandle;
+   UINT32                         BusFrequencyKHz;
+   EFI_I2C_CR_MU_TRANSFER          MuTransfer;
++  /* Direct GENI FIFO backend used when the native MU endpoint is unavailable. */
++  EFI_I2C_CR_MU_TRANSFER          FifoTransfer;
+ } EFI_I2C_CR_PROTOCOL;
+diff --git a/Include/Protocol/EFIQupCrProtocol.h b/Include/Protocol/EFIQupCrProtocol.h
+index 7a7573d..da7f9c5 100644
+--- a/Include/Protocol/EFIQupCrProtocol.h
++++ b/Include/Protocol/EFIQupCrProtocol.h
+@@ -1,9 +1,8 @@
+ /** @file
+- *  Read-only QUPv3 target resource protocol.
++ *  QUPv3 target resources and serial-engine ownership protocol.
+  *
+- *  QUP hardware is initialized by the MU QUP/GENI stack.  This protocol
+- *  publishes the target resource contract to Crane consumers without taking
+- *  ownership of the controller registers.
++ *  Publishes Linux-derived resources and arbitrates native FIFO/GPI clients.
++ *  The client holding a lease initializes and quiesces the controller.
+  *
+  *  SPDX-License-Identifier: MIT
+  */
+@@ -11,7 +10,7 @@
+ 
+ #include <Library/CrTargetQupLib.h>
+ 
+-#define EFI_QUP_CR_PROTOCOL_REVISION  0x0000000000010000ULL
++#define EFI_QUP_CR_PROTOCOL_REVISION  0x0000000000010001ULL
+ #define EFI_QUP_CR_PROTOCOL_GUID \
+   { 0x2a4d8f31, 0x6f7a, 0x4ec0, { 0x8d, 0x2a, 0xb1, 0x17, 0x6e, 0x93, 0x54, 0x01 } }
+ 
+@@ -29,8 +28,21 @@ typedef EFI_STATUS (EFIAPI *EFI_QUP_CR_GET_CONTEXT)(
+   OUT CONST CR_TARGET_QUP_CONTEXT **Context
+   );
+ 
++/* All native clients must acquire the SE before mode/MMIO changes.  Release
++   only after GENI and DMA are idle.  Quiesced=FALSE permanently fences the SE
++   for this boot; another client must not change mode behind outstanding DMA. */
++typedef enum { QupCrSeFifo = 1, QupCrSeGpi = 2 } EFI_QUP_CR_SE_MODE;
++typedef EFI_STATUS (EFIAPI *EFI_QUP_CR_ACQUIRE_SE)(
++  IN EFI_QUP_CR_PROTOCOL *This, IN UINT8 WrapperId, IN UINT8 Engine,
++  IN VOID *Owner, IN EFI_QUP_CR_SE_MODE Mode);
++typedef EFI_STATUS (EFIAPI *EFI_QUP_CR_RELEASE_SE)(
++  IN EFI_QUP_CR_PROTOCOL *This, IN UINT8 WrapperId, IN UINT8 Engine,
++  IN VOID *Owner, IN BOOLEAN Quiesced);
++
+ typedef struct _EFI_QUP_CR_PROTOCOL {
+   UINT64                    Revision;
+   EFI_QUP_CR_GET_WRAPPER    GetWrapper;
+   EFI_QUP_CR_GET_CONTEXT    GetContext;
++  EFI_QUP_CR_ACQUIRE_SE      AcquireSe;
++  EFI_QUP_CR_RELEASE_SE      ReleaseSe;
+ } EFI_QUP_CR_PROTOCOL;
+diff --git a/Include/Protocol/EFIRpmhCrProtocol.h b/Include/Protocol/EFIRpmhCrProtocol.h
+index 652072c..60000bc 100644
+--- a/Include/Protocol/EFIRpmhCrProtocol.h
++++ b/Include/Protocol/EFIRpmhCrProtocol.h
+@@ -9,7 +9,7 @@
+ #include <oskal/cr_types.h>
+ #include <Library/rpmh.h>
+ 
+-#define EFI_RPMH_CR_PROTOCOL_REVISION 0x0000000000010000
++#define EFI_RPMH_CR_PROTOCOL_REVISION 0x0000000000010001
+ 
+ #define EFI_RPMH_CR_PROTOCOL_GUID                                              \
+   {0x481e2514, 0xc4a9, 0x49a8, {0xaf, 0x78, 0x7a, 0x07, 0x77, 0xe9, 0xa0, 0x78}}
+@@ -22,9 +22,11 @@ typedef struct _EFI_RPMH_CR_PROTOCOL EFI_RPMH_CR_PROTOCOL;
+ typedef EFI_STATUS(EFIAPI *EFI_RPMH_CR_WRITE)(
+     IN EFI_RPMH_CR_PROTOCOL *This, IN RpmhTcsCmd *TcsCmd, IN UINT32 NumCmds);
+ 
+-/* FALSE releases this adapter's complete rail request, including any voltage
+-   and mode votes acquired before an enable failure. Other NPA clients retain
+-   their requests. A failed release must be retried before prerequisites go. */
++/* FALSE releases one acquired reference; the final reference also releases
++   voltage/mode votes. Retry a failed release before removing prerequisites.
++   New consumers must use AcquireVreg and release only when Owned is TRUE.
++   The legacy setters/enable sequence cannot identify a consumer whose setup
++   failed before acquiring a shared reference. Other NPA clients retain votes. */
+ typedef EFI_STATUS(EFIAPI *EFI_RPMH_CR_ENABLE_VREG)(
+     IN EFI_RPMH_CR_PROTOCOL *This, IN CONST CHAR8 *Name, IN BOOLEAN Enable);
+ 
+@@ -36,10 +38,19 @@ typedef EFI_STATUS(EFIAPI *EFI_RPMH_CR_SET_VREG_MODE)(
+     IN EFI_RPMH_CR_PROTOCOL *This, IN CONST CHAR8 *Name,
+     IN CONST UINT8 Mode);
+ 
++/* Atomically reserve one reference before programming a previously idle rail.
++   Owned is TRUE even on a partial programming failure: release it with FALSE.
++   A rejected shared request returns Owned=FALSE and leaves existing votes alone.
++   Shared consumers must request identical voltage and mode. */
++typedef EFI_STATUS(EFIAPI *EFI_RPMH_CR_ACQUIRE_VREG)(
++    IN EFI_RPMH_CR_PROTOCOL *This, IN CONST CHAR8 *Name,
++    IN UINT32 VoltageMv, IN UINT8 Mode, OUT BOOLEAN *Owned);
++
+ typedef struct _EFI_RPMH_CR_PROTOCOL {
+   UINT64                       Revision;
+   EFI_RPMH_CR_WRITE            RpmhWrite;
+   EFI_RPMH_CR_ENABLE_VREG      RpmhEnableVreg;
+   EFI_RPMH_CR_SET_VREG_VOLTAGE RpmhSetVregVoltage;
+   EFI_RPMH_CR_SET_VREG_MODE    RpmhSetVregMode;
++  EFI_RPMH_CR_ACQUIRE_VREG     AcquireVreg;
+ } EFI_RPMH_CR_PROTOCOL;
+diff --git a/Target/Sm8450/CrClockTarget.c b/Target/Sm8450/CrClockTarget.c
+index dc7735a..ba609c7 100644
+--- a/Target/Sm8450/CrClockTarget.c
++++ b/Target/Sm8450/CrClockTarget.c
+@@ -218,16 +218,19 @@ STATIC ClockNode *mPcie1RchngParents[] = { &GccPcie1PhyRchngClkSrc };
+   }
+ 
+ PCIE_BRANCH(GccAggreNocPcie0AxiClk, "gcc_aggre_noc_pcie_0_axi_clk",
+-            0x7b08c, 0x62000, BIT(12), 0, 0x7b08c);
++            0x7b08c, 0x62000, BIT(12), CLOCK_NODE_BRANCH_HALT_SKIP,
++            0x7b08c);
+ PCIE_BRANCH(GccAggreNocPcie1AxiClk, "gcc_aggre_noc_pcie_1_axi_clk",
+-            0x9d098, 0x62000, BIT(11), 0, 0x9d098);
++            0x9d098, 0x62000, BIT(11), CLOCK_NODE_BRANCH_HALT_SKIP,
++            0x9d098);
+ PCIE_BRANCH(GccDdrssPcieSfTbuClk, "gcc_ddrss_pcie_sf_tbu_clk",
+-            0x9d094, 0x62000, BIT(19), 0, 0x9d094);
++            0x9d094, 0x62000, BIT(19), CLOCK_NODE_BRANCH_HALT_SKIP,
++            0x9d094);
+ 
+ PCIE_BRANCH(GccPcie0CfgAhbClk, "gcc_pcie_0_cfg_ahb_clk",
+             0x7b030, 0x62008, BIT(2), CLOCK_NODE_BRANCH_VOTED, 0x7b030);
+ PCIE_BRANCH(GccPcie0MstrAxiClk, "gcc_pcie_0_mstr_axi_clk",
+-            0x7b028, 0x62008, BIT(1), 0, 0);
++            0x7b028, 0x62008, BIT(1), CLOCK_NODE_BRANCH_HALT_SKIP, 0);
+ PCIE_BRANCH(GccPcie0SlvAxiClk, "gcc_pcie_0_slv_axi_clk",
+             0x7b020, 0x62008, BIT(0), CLOCK_NODE_BRANCH_VOTED, 0x7b020);
+ PCIE_BRANCH(GccPcie0SlvQ2aAxiClk, "gcc_pcie_0_slv_q2a_axi_clk",
+@@ -241,12 +244,12 @@ PCIE_BRANCH_PARENT(GccPcie0PhyRchngClk, "gcc_pcie_0_phy_rchng_clk",
+                    0x7b044, 0x62000, BIT(22), CLOCK_NODE_BRANCH_VOTED, 0,
+                    mPcie0RchngParents);
+ PCIE_BRANCH(GccPcie0PipeClk, "gcc_pcie_0_pipe_clk",
+-            0x7b03c, 0x62008, BIT(4), 0, 0);
++            0x7b03c, 0x62008, BIT(4), CLOCK_NODE_BRANCH_HALT_SKIP, 0);
+ 
+ PCIE_BRANCH(GccPcie1CfgAhbClk, "gcc_pcie_1_cfg_ahb_clk",
+             0x9d02c, 0x62000, BIT(28), CLOCK_NODE_BRANCH_VOTED, 0x9d02c);
+ PCIE_BRANCH(GccPcie1MstrAxiClk, "gcc_pcie_1_mstr_axi_clk",
+-            0x9d024, 0x62000, BIT(27), 0, 0);
++            0x9d024, 0x62000, BIT(27), CLOCK_NODE_BRANCH_HALT_SKIP, 0);
+ PCIE_BRANCH(GccPcie1SlvAxiClk, "gcc_pcie_1_slv_axi_clk",
+             0x9d01c, 0x62000, BIT(26), CLOCK_NODE_BRANCH_VOTED, 0x9d01c);
+ PCIE_BRANCH(GccPcie1SlvQ2aAxiClk, "gcc_pcie_1_slv_q2a_axi_clk",
+@@ -263,7 +266,7 @@ PCIE_BRANCH_PARENT(GccPcie1PhyRchngClk, "gcc_pcie_1_phy_rchng_clk",
+                    0x9d048, 0x62000, BIT(23), CLOCK_NODE_BRANCH_VOTED, 0,
+                    mPcie1RchngParents);
+ PCIE_BRANCH(GccPcie1PipeClk, "gcc_pcie_1_pipe_clk",
+-            0x9d040, 0x62000, BIT(30), 0, 0);
++            0x9d040, 0x62000, BIT(30), CLOCK_NODE_BRANCH_HALT_SKIP, 0);
+ 
+ STATIC ClockNode *mGccClocks[SM8450_CLOCK_GCC_CLOCK_COUNT] = {
+   [GCC_AGGRE_NOC_PCIE_0_AXI_CLK] = &GccAggreNocPcie0AxiClk,
+@@ -390,7 +393,8 @@ CrTargetClockResolveResource (
+   }
+   *NativeId = NULL;
+   *Flags    = 0;
+-  if (cr_strcmp (Controller, "gcc") != 0) {
++  if ((cr_strcmp (Controller, "gcc") != 0) &&
++      (cr_strcmp (Controller, "dispcc") != 0)) {
+     return CR_UNSUPPORTED;
+   }
+ 
+@@ -448,6 +452,9 @@ CrTargetClockReset(
+     Offset = 0x7C01CU;
+   } else if (cr_strcmp(Id, "gcc_pcie_1_phy_bcr") == 0) {
+     Offset = 0x9E01CU;
++  } else if (cr_strcmp(Id, "gcc_ufs_phy_bcr") == 0) {
++    /* GCC_UFS_PHY_BCR (Linux gcc-sm8450.c, reset ID 25). */
++    Offset = 0x87000U;
+   } else {
+     return CR_UNSUPPORTED;
+   }
+diff --git a/Target/Sm8450/CrQupTarget.c b/Target/Sm8450/CrQupTarget.c
+index 226ecd9..b7cdf80 100644
+--- a/Target/Sm8450/CrQupTarget.c
++++ b/Target/Sm8450/CrQupTarget.c
+@@ -3,8 +3,8 @@
+  *
+  *  Addresses and interrupt/SID values are taken from Linux's sm8450.dtsi:
+  *  QUP wrappers at 0x9c0000/0xac0000/0x8c0000 and GPI DMA blocks at
+- *  0x900000/0xa00000/0x800000.  The data is intentionally passive; MU's
+- *  prebuilt QUP/GPI drivers remain the register owners.
++ *  0x900000/0xa00000/0x800000.  QUPCrDxe uses this data to arbitrate
++ *  serial-engine ownership for the native I2C FIFO and GPI-DMA transports.
+  *
+  *  SPDX-License-Identifier: MIT
+  */
+diff --git a/Tests/ClockCrDxeTest.c b/Tests/ClockCrDxeTest.c
+index 1686563..efd888e 100644
+--- a/Tests/ClockCrDxeTest.c
++++ b/Tests/ClockCrDxeTest.c
+@@ -13,6 +13,7 @@
+ #include <Uefi.h>
+ 
+ #include "../Driver/ClockCrDxe/ClockCrDxe.c"
++#include "../Target/Sm8450/CrClockTarget.c"
+ 
+ EFI_GUID gEfiClockProtocolGuid = EFI_CLOCK_PROTOCOL_GUID;
+ EFI_GUID gEfiClockCrProtocolGuid = EFI_CLOCK_CR_PROTOCOL_GUID;
+@@ -23,6 +24,7 @@ STATIC EFI_STATUS mInstallStatus;
+ STATIC EFI_STATUS mGetIdStatus;
+ STATIC EFI_STATUS mSetRateStatus;
+ STATIC EFI_STATUS mSelectExternalStatus;
++STATIC EFI_STATUS mSetDividerStatus;
+ STATIC EFI_STATUS mEnableStatus;
+ STATIC EFI_STATUS mDisableStatus;
+ STATIC EFI_STATUS mIsEnabledStatus;
+@@ -37,6 +39,7 @@ STATIC UINTN      mInstallCalls;
+ STATIC UINTN      mGetIdCalls;
+ STATIC UINTN      mSetRateCalls;
+ STATIC UINTN      mSelectExternalCalls;
++STATIC UINTN      mSetDividerCalls;
+ STATIC UINTN      mEnableCalls;
+ STATIC UINTN      mDisableCalls;
+ STATIC UINTN      mIsEnabledCalls;
+@@ -46,8 +49,15 @@ STATIC UINTN      mPowerDisableCalls;
+ STATIC UINTN      mResetCalls;
+ STATIC UINTN      mLastId;
+ STATIC UINTN      mLastExternalId;
++STATIC UINTN      mLastDividerId;
+ STATIC UINT32     mLastRate;
++STATIC UINT32     mExternalRate;
+ STATIC UINT32     mExternalSource;
++STATIC UINT32     mExternalDivider;
++STATIC UINT32     mExternalM;
++STATIC UINT32     mExternalN;
++STATIC UINT32     mExternalTwiceD;
++STATIC UINT32     mLastDivider;
+ STATIC EFI_CLOCK_FREQUENCY_TYPE mLastMatch;
+ STATIC EFI_CLOCK_RESET_TYPE     mLastReset;
+ STATIC CHAR8      mLastName[96];
+@@ -55,6 +65,16 @@ STATIC EFI_CLOCK_PROTOCOL mMockNative;
+ STATIC BOOLEAN    mClockEnabled;
+ STATIC BOOLEAN    mEnableFailureLeavesEnabled;
+ 
++INTN
++EFIAPI
++AsciiStrCmp (
++  IN CONST CHAR8 *FirstString,
++  IN CONST CHAR8 *SecondString
++  )
++{
++  return strcmp (FirstString, SecondString);
++}
++
+ VOID
+ EFIAPI
+ DebugPrint (
+@@ -124,6 +144,15 @@ IdForName (
+   if (strcmp (Name, "gcc_pcie_0_phy_bcr") == 0) {
+     return 30;
+   }
++  if (strcmp (Name, "disp_cc_mdss_byte0_clk") == 0) {
++    return 50;
++  }
++  if (strcmp (Name, "disp_cc_mdss_pclk0_clk") == 0) {
++    return 51;
++  }
++  if (strcmp (Name, "disp_cc_mdss_byte0_intf_clk") == 0) {
++    return 52;
++  }
+   return 90;
+ }
+ 
+@@ -234,14 +263,35 @@ MockSelectExternal (
+   )
+ {
+   assert (This == &mMockNative);
+-  assert (Rate == 0 && Source == 0 && Divider == 0);
+-  assert (M == 0 && N == 0 && TwiceD == 0);
++  assert (mVoteLock.Lock == EfiLockAcquired);
+   mSelectExternalCalls++;
+   mLastExternalId = ClockId;
++  mExternalRate = Rate;
+   mExternalSource = Source;
++  mExternalDivider = Divider;
++  mExternalM = M;
++  mExternalN = N;
++  mExternalTwiceD = TwiceD;
+   return mSelectExternalStatus;
+ }
+ 
++STATIC
++EFI_STATUS
++EFIAPI
++MockSetDivider (
++  IN EFI_CLOCK_PROTOCOL *This,
++  IN UINTN               ClockId,
++  IN UINT32              Divider
++  )
++{
++  assert (This == &mMockNative);
++  assert (mVoteLock.Lock == EfiLockAcquired);
++  mSetDividerCalls++;
++  mLastDividerId = ClockId;
++  mLastDivider = Divider;
++  return mSetDividerStatus;
++}
++
+ STATIC
+ EFI_STATUS
+ EFIAPI
+@@ -309,36 +359,18 @@ CrDalClockResolveResource (
+   OUT UINT32                      *Flags
+   )
+ {
++  EFI_STATUS Status;
++
+   assert (Controller != NULL && Id != NULL && NativeId != NULL && Flags != NULL);
+   if (EFI_ERROR (mResolveStatus)) {
+     return mResolveStatus;
+   }
+-  if (strcmp (Controller, "gcc") != 0) {
+-    return EFI_UNSUPPORTED;
+-  }
+-
+-  *Flags = mResolveFlags;
+-  if ((Kind == CrDalClockResourceClock) &&
+-      ((strcmp (Id, "gcc_pcie_0_pipe_clk_src") == 0) ||
+-       (strcmp (Id, "gcc_pcie_0_pipe_clk") == 0))) {
+-    *NativeId = "gcc_pcie_0_pipe_clk";
+-    *Flags |= CR_DAL_CLOCK_RESOURCE_NO_RATE |
+-              CR_DAL_CLOCK_RESOURCE_EXTERNAL_SOURCE;
+-  } else if ((Kind == CrDalClockResourceClock) &&
+-             ((strcmp (Id, "gcc_pcie_1_phy_aux_clk_src") == 0) ||
+-              (strcmp (Id, "gcc_pcie_1_phy_aux_clk") == 0))) {
+-    *NativeId = "gcc_pcie_1_phy_aux_clk";
+-    *Flags |= CR_DAL_CLOCK_RESOURCE_NO_RATE |
+-              CR_DAL_CLOCK_RESOURCE_EXTERNAL_SOURCE;
+-  } else if ((Kind == CrDalClockResourcePowerDomain) &&
+-             (strcmp (Id, "pcie_0_gdsc") == 0)) {
+-    *NativeId = "gcc_pcie_0_gdsc";
+-  } else if ((Kind == CrDalClockResourceReset) &&
+-             (strcmp (Id, "gcc_pcie_0_bcr") == 0)) {
+-    *NativeId = "gcc_pcie_0_aux_clk";
+-  } else {
+-    *NativeId = Id;
++  Status = CrTargetClockResolveResource (
++             Controller, Id, Kind, NativeId, Flags);
++  if (EFI_ERROR (Status)) {
++    return Status;
+   }
++  *Flags |= mResolveFlags;
+   if (mResolveNull) {
+     *NativeId = NULL;
+   }
+@@ -392,6 +424,7 @@ ResetHarness (
+   mGetIdStatus = EFI_SUCCESS;
+   mSetRateStatus = EFI_SUCCESS;
+   mSelectExternalStatus = EFI_SUCCESS;
++  mSetDividerStatus = EFI_SUCCESS;
+   mEnableStatus = EFI_SUCCESS;
+   mDisableStatus = EFI_SUCCESS;
+   mIsEnabledStatus = EFI_SUCCESS;
+@@ -406,6 +439,7 @@ ResetHarness (
+   mGetIdCalls = 0;
+   mSetRateCalls = 0;
+   mSelectExternalCalls = 0;
++  mSetDividerCalls = 0;
+   mEnableCalls = 0;
+   mDisableCalls = 0;
+   mIsEnabledCalls = 0;
+@@ -415,8 +449,15 @@ ResetHarness (
+   mResetCalls = 0;
+   mLastId = 0;
+   mLastExternalId = 0;
++  mLastDividerId = 0;
+   mLastRate = 0;
++  mExternalRate = 0;
+   mExternalSource = 2;
++  mExternalDivider = 0;
++  mExternalM = 0;
++  mExternalN = 0;
++  mExternalTwiceD = 0;
++  mLastDivider = 0;
+   mLastMatch = EfiClockFrequencyHzAtLeast;
+   mLastReset = EfiClockResetPulse;
+   mClockEnabled = FALSE;
+@@ -432,6 +473,7 @@ ResetHarness (
+   mMockNative.IsClockEnabled = MockIsClockEnabled;
+   mMockNative.SetClockFreqHz = MockSetRate;
+   mMockNative.SelectExternalSource = MockSelectExternal;
++  mMockNative.SetClockDivider = MockSetDivider;
+   mMockNative.GetClockPowerDomainID = MockGetPowerId;
+   mMockNative.EnableClockPowerDomain = MockEnablePower;
+   mMockNative.DisableClockPowerDomain = MockDisablePower;
+@@ -469,6 +511,16 @@ TestAbiAndEntryPoint (
+   assert (ClockEntryPoint (Image, NULL) == EFI_INCOMPATIBLE_VERSION);
+   assert (mInstallCalls == 0 && mNativeClock == NULL);
+ 
++  ResetHarness ();
++  mMockNative.SetClockDivider = NULL;
++  assert (ClockEntryPoint (Image, NULL) == EFI_INCOMPATIBLE_VERSION);
++  assert (mInstallCalls == 0 && mNativeClock == NULL);
++
++  ResetHarness ();
++  mMockNative.SelectExternalSource = NULL;
++  assert (ClockEntryPoint (Image, NULL) == EFI_INCOMPATIBLE_VERSION);
++  assert (mInstallCalls == 0 && mNativeClock == NULL);
++
+   ResetHarness ();
+   mInstallStatus = EFI_DEVICE_ERROR;
+   assert (ClockEntryPoint (Image, NULL) == EFI_DEVICE_ERROR);
+@@ -587,6 +639,8 @@ TestAliasesAndPowerDomains (
+   assert (mSetRateCalls == 0 && mSelectExternalCalls == 1 &&
+           mEnableCalls == 1 && mLastExternalId == 20 &&
+           mExternalSource == 0);
++  assert (mExternalRate == 0 && mExternalDivider == 0 && mExternalM == 0 &&
++          mExternalN == 0 && mExternalTwiceD == 0);
+   assert (ProtocolSetClock (
+             &mClockCrProtocol, "gcc", "gcc_pcie_0_pipe_clk", 250000000,
+             TRUE
+@@ -612,6 +666,8 @@ TestAliasesAndPowerDomains (
+   assert (mSetRateCalls == 0 && mSelectExternalCalls == 1 &&
+           mEnableCalls == 1 && mLastExternalId == 25 &&
+           mExternalSource == 0);
++  assert (mExternalRate == 0 && mExternalDivider == 0 && mExternalM == 0 &&
++          mExternalN == 0 && mExternalTwiceD == 0);
+   assert (ProtocolSetClock (
+             &mClockCrProtocol, "gcc", "gcc_pcie_1_phy_aux_clk", 20000000,
+             TRUE
+@@ -687,6 +743,197 @@ TestResetAndResolverErrors (
+             ) == EFI_NOT_FOUND);
+ }
+ 
++STATIC
++VOID
++TestDisplayResourceResolution (
++  VOID
++  )
++{
++  CONST CHAR8 *Name;
++  UINT32       Flags;
++
++  assert (CrTargetClockResolveResource (
++            "dispcc", "disp_cc_mdss_byte0_clk", CrDalClockResourceClock,
++            &Name, &Flags) == EFI_SUCCESS);
++  assert (strcmp (Name, "disp_cc_mdss_byte0_clk") == 0 && Flags == 0);
++  assert (CrTargetClockResolveResource (
++            "dispcc", "mdss_gdsc", CrDalClockResourcePowerDomain,
++            &Name, &Flags) == EFI_SUCCESS);
++  assert (strcmp (Name, "mdss_gdsc") == 0 && Flags == 0);
++  assert (CrTargetClockResolveResource (
++            "rpmhcc", "disp_cc_mdss_byte0_clk", CrDalClockResourceClock,
++            &Name, &Flags) == EFI_UNSUPPORTED);
++  assert (Name == NULL && Flags == 0);
++  assert (CrTargetClockResolveResource (
++            "dispcc", "disp_cc_mdss_byte0_clk", CrDalClockResourceMax,
++            &Name, &Flags) == EFI_INVALID_PARAMETER);
++}
++
++STATIC
++VOID
++TestDisplaySourceAndDivider (
++  VOID
++  )
++{
++  ResetHarness ();
++  assert (mClockCrProtocol.ConfigureExternalSource (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_pclk0_clk",
++            148500000, 2, 3, 5, 7, 14) == EFI_SUCCESS);
++  assert (strcmp (mLastName, "disp_cc_mdss_pclk0_clk") == 0);
++  assert (mSelectExternalCalls == 1 && mLastExternalId == 51);
++  assert (mExternalRate == 148500000 && mExternalSource == 2 &&
++          mExternalDivider == 3 && mExternalM == 5 && mExternalN == 7 &&
++          mExternalTwiceD == 14);
++  assert (mClockCrProtocol.SetDivider (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_intf_clk",
++            2) == EFI_SUCCESS);
++  assert (strcmp (mLastName, "disp_cc_mdss_byte0_intf_clk") == 0);
++  assert (mSetDividerCalls == 1 && mLastDividerId == 52 && mLastDivider == 2);
++  assert (mGetIdCalls == 2 && mIsEnabledCalls == 2);
++  assert (mEnableCalls == 0 && mDisableCalls == 0 && mSetRateCalls == 0);
++  assert (FindVote (mClockVotes, CLOCK_CR_MAX_CLOCK_VOTES, 51, FALSE) == NULL);
++  assert (FindVote (mClockVotes, CLOCK_CR_MAX_CLOCK_VOTES, 52, FALSE) == NULL);
++  assert (mVoteLock.Lock == EfiLockReleased);
++}
++
++STATIC
++VOID
++TestReconfigurationWhileEnabled (
++  VOID
++  )
++{
++  ResetHarness ();
++  /* An enabled clock outside this adapter also blocks reconfiguration. */
++  mClockEnabled = TRUE;
++  assert (ProtocolConfigureExternalSource (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            111375000, 1, 1, 0, 0, 0) == EFI_ACCESS_DENIED);
++  assert (ProtocolSetDivider (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            2) == EFI_ACCESS_DENIED);
++  assert (mIsEnabledCalls == 2);
++  assert (mSelectExternalCalls == 0 && mSetDividerCalls == 0);
++  assert (mVoteLock.Lock == EfiLockReleased);
++
++  ResetHarness ();
++  assert (ProtocolSetClock (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk", 0,
++            TRUE) == EFI_SUCCESS);
++  assert (mIsEnabledCalls == 1);
++  /* Local ownership still blocks a transient hardware-disabled state. */
++  mClockEnabled = FALSE;
++  assert (ProtocolConfigureExternalSource (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            111375000, 1, 1, 0, 0, 0) == EFI_ACCESS_DENIED);
++  assert (ProtocolSetDivider (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            2) == EFI_ACCESS_DENIED);
++  assert (mSelectExternalCalls == 0 && mSetDividerCalls == 0);
++  assert (mIsEnabledCalls == 1 && mVoteLock.Lock == EfiLockReleased);
++
++  assert (ProtocolSetClock (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk", 0,
++            FALSE) == EFI_SUCCESS);
++  assert (ProtocolConfigureExternalSource (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            111375000, 1, 1, 0, 0, 0) == EFI_SUCCESS);
++  assert (ProtocolSetDivider (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            2) == EFI_SUCCESS);
++  assert (mSelectExternalCalls == 1 && mSetDividerCalls == 1);
++}
++
++STATIC
++VOID
++TestReconfigurationValidation (
++  VOID
++  )
++{
++  CONST struct {
++    EFI_CLOCK_CR_PROTOCOL *Protocol;
++    CONST CHAR8           *Controller;
++    CONST CHAR8           *Id;
++    UINT32                 Divider;
++  } Invalid[] = {
++    { NULL, "dispcc", "disp_cc_mdss_byte0_clk", 1 },
++    { &mClockCrProtocol, NULL, "disp_cc_mdss_byte0_clk", 1 },
++    { &mClockCrProtocol, "dispcc", NULL, 1 },
++    { &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk", 0 },
++  };
++  UINTN Index;
++
++  ResetHarness ();
++  for (Index = 0; Index < ARRAY_SIZE (Invalid); Index++) {
++    assert (ProtocolConfigureExternalSource (
++              Invalid[Index].Protocol, Invalid[Index].Controller,
++              Invalid[Index].Id, 111375000, 1, Invalid[Index].Divider,
++              0, 0, 0) == EFI_INVALID_PARAMETER);
++    assert (ProtocolSetDivider (
++              Invalid[Index].Protocol, Invalid[Index].Controller,
++              Invalid[Index].Id, Invalid[Index].Divider
++              ) == EFI_INVALID_PARAMETER);
++  }
++  mNativeClock = NULL;
++  assert (ProtocolConfigureExternalSource (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            111375000, 1, 1, 0, 0, 0) == EFI_NOT_READY);
++  assert (ProtocolSetDivider (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            2) == EFI_NOT_READY);
++  assert (mGetIdCalls == 0 && mIsEnabledCalls == 0);
++  assert (mSelectExternalCalls == 0 && mSetDividerCalls == 0);
++}
++
++STATIC
++VOID
++TestReconfigurationFailurePropagation (
++  VOID
++  )
++{
++  CONST EFI_STATUS Failures[] = {
++    EFI_NOT_FOUND, EFI_COMPROMISED_DATA, EFI_NOT_FOUND, EFI_DEVICE_ERROR,
++  };
++  UINTN Index;
++
++  for (Index = 0; Index < ARRAY_SIZE (Failures); Index++) {
++    ResetHarness ();
++    switch (Index) {
++      case 0: mResolveStatus = Failures[Index]; break;
++      case 1: mResolveFlags = BIT2; break;
++      case 2: mGetIdStatus = Failures[Index]; break;
++      case 3: mIsEnabledStatus = Failures[Index]; break;
++    }
++    assert (ProtocolConfigureExternalSource (
++              &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++              111375000, 1, 1, 0, 0, 0) == Failures[Index]);
++    assert (ProtocolSetDivider (
++              &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++              2) == Failures[Index]);
++    assert (mSelectExternalCalls == 0 && mSetDividerCalls == 0);
++    assert (mVoteLock.Lock == EfiLockReleased);
++  }
++
++  ResetHarness ();
++  mSelectExternalStatus = EFI_DEVICE_ERROR;
++  mSetDividerStatus = EFI_TIMEOUT;
++  assert (ProtocolConfigureExternalSource (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            111375000, 1, 1, 0, 0, 0) == EFI_DEVICE_ERROR);
++  assert (ProtocolSetDivider (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            2) == EFI_TIMEOUT);
++  assert (mSelectExternalCalls == 1 && mSetDividerCalls == 1);
++  assert (mVoteLock.Lock == EfiLockReleased);
++  mSelectExternalStatus = EFI_SUCCESS;
++  mSetDividerStatus = EFI_SUCCESS;
++  assert (ProtocolConfigureExternalSource (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            111375000, 1, 1, 0, 0, 0) == EFI_SUCCESS);
++  assert (ProtocolSetDivider (
++            &mClockCrProtocol, "dispcc", "disp_cc_mdss_byte0_clk",
++            2) == EFI_SUCCESS);
++}
++
+ int
+ main (void)
+ {
+@@ -694,6 +941,11 @@ main (void)
+   TestClockVotesAndRates ();
+   TestAliasesAndPowerDomains ();
+   TestResetAndResolverErrors ();
+-  puts ("ClockCrDxe: native ABI, aliases, votes, reset, and rollback passed");
++  TestDisplayResourceResolution ();
++  TestDisplaySourceAndDivider ();
++  TestReconfigurationWhileEnabled ();
++  TestReconfigurationValidation ();
++  TestReconfigurationFailurePropagation ();
++  puts ("ClockCrDxe: native ABI, SM8450 resources, votes, reset, source/divider, and rollback passed");
+   return 0;
+ }
+diff --git a/Tests/I2cCrTest.c b/Tests/I2cCrTest.c
+index 0130bbd..bb43c3c 100644
+--- a/Tests/I2cCrTest.c
++++ b/Tests/I2cCrTest.c
+@@ -5,7 +5,11 @@
+ #include "MuBusTestCommon.h"
+ #include "../Driver/I2CCrDxe/I2CCrDxe.c"
+ 
++#define TEST_CONFIGURE_PINS I2cCrConfigurePins
++#include "GeniPinmuxTest.h"
++
+ EFI_GUID gQcomI2CProtocolGuid;
++EFI_GUID gEfiQupCrProtocolGuid;
+ EFI_GUID gEfiI2cMasterProtocolGuid;
+ EFI_GUID gEfiI2cCrProtocolGuid;
+ static unsigned Calls;
+@@ -66,31 +70,37 @@ static void TestEntry(void) {
+   EFI_I2C_REQUEST_PACKET Packet = {0};
+   EFI_I2C_CR_PROTOCOL *Protocol;
+   UINTN Hz = 333333;
++  OptionalQupGuid = &gEfiQupCrProtocolGuid;
+   StandardGuid = &gEfiI2cMasterProtocolGuid;
+   PrivateGuid = &gQcomI2CProtocolGuid;
+   PublishedGuid = &gEfiI2cCrProtocolGuid;
+   StandardBackend = &Master;
+   PrivateBackend = &Mu;
+   InitEntryServices();
++  /* Exercise the PI fallback first.  The production entry point prefers
++     MU instances when this protocol is published, so leave it absent while
++     checking the standard-only error paths. */
++  PrivateBackend = NULL;
+   StandardLocateStatus = EFI_OUT_OF_RESOURCES;
+   assert(I2CCrEntryPoint((EFI_HANDLE)0xaaaa, NULL) == EFI_OUT_OF_RESOURCES);
+-  assert(PrivateLocateCalls == 0 && Allocations == 0);
++  assert(PrivateLocateCalls == 1 && Allocations == 0);
+   StandardLocateStatus = EFI_SUCCESS;
+   InstallStatus = EFI_DEVICE_ERROR;
+   assert(I2CCrEntryPoint((EFI_HANDLE)0xaaaa, NULL) == EFI_DEVICE_ERROR);
+-  assert(PrivateLocateCalls == 0 && Allocations == 0 && mInstances == NULL);
++  assert(PrivateLocateCalls == 2 && Allocations == 0 && mInstances == NULL);
+   InstallStatus = EFI_SUCCESS;
+   assert(I2CCrEntryPoint((EFI_HANDLE)0xaaaa, NULL) == EFI_SUCCESS);
+   Protocol = &mInstances[0].Protocol;
+   assert(Protocol->MasterHandle == (EFI_HANDLE)0x4444);
+   assert(Protocol->Master == &Master && Protocol->I2cControllerCapabilities == &Caps);
+-  assert(Protocol->Qcom == NULL && PrivateLocateCalls == 0);
++  assert(Protocol->Qcom == NULL && PrivateLocateCalls == 3);
+   assert(Protocol->SetBusFrequency(Protocol, &Hz) == EFI_SUCCESS && Hz == 300000);
+   assert(Protocol->Reset(Protocol) == EFI_DEVICE_ERROR);
+   assert(Protocol->StartRequest(Protocol, 0x456, &Packet, (EFI_EVENT)0x9999, NULL) == EFI_TIMEOUT);
+   assert(I2CCrEntryPoint((EFI_HANDLE)0xaaaa, NULL) == EFI_ALREADY_STARTED);
+   FreePool(mInstances); mInstances = NULL;
+   StandardLocateStatus = EFI_NOT_FOUND;
++  PrivateBackend = &Mu;
+   InstallStatus = EFI_OUT_OF_RESOURCES;
+   assert(I2CCrEntryPoint((EFI_HANDLE)0xaaaa, NULL) == EFI_OUT_OF_RESOURCES);
+   assert(Opens == 0 && Closes == 0 && mInstances == NULL && Allocations == 0);
+@@ -129,6 +139,7 @@ static void CheckCompletion(void) {
+   assert(PendingInstance->Busy == 0 && *PendingStatus == EFI_SUCCESS);
+ }
+ int main(void) {
++  TestPinmux ();
+   MU_I2C_PROTOCOL Mu = { .Transfer = Transfer };
+   I2C_CR_INSTANCE Instance = { .Protocol = {
+     .Qcom = &Mu, .QcomHandle = (VOID *)0x3333, .BusFrequencyKHz = 400
+diff --git a/Tests/MuBusTestCommon.h b/Tests/MuBusTestCommon.h
+index 8dd82c0..8e0a492 100644
+--- a/Tests/MuBusTestCommon.h
++++ b/Tests/MuBusTestCommon.h
+@@ -80,6 +80,7 @@ static void InitBootServices(void) {
+ 
+ static EFI_GUID *StandardGuid;
+ static EFI_GUID *PrivateGuid;
++static EFI_GUID *OptionalQupGuid;
+ static EFI_GUID *PublishedGuid;
+ static VOID *StandardBackend;
+ static VOID *PrivateBackend;
+@@ -109,6 +110,7 @@ static EFI_STATUS EFIAPI OpenStandard(EFI_HANDLE Handle, EFI_GUID *Guid,
+ }
+ static EFI_STATUS EFIAPI LocatePrivate(EFI_GUID *Guid, VOID *Registration,
+     VOID **Protocol) {
++  if (Guid == OptionalQupGuid) { *Protocol = NULL; return EFI_NOT_FOUND; }
+   assert(Guid == PrivateGuid && Registration == NULL);
+   ++PrivateLocateCalls;
+   *Protocol = PrivateBackend;
+diff --git a/Tests/RpmhCrDxeTest.c b/Tests/RpmhCrDxeTest.c
+index dd389b4..0a8d557 100644
+--- a/Tests/RpmhCrDxeTest.c
++++ b/Tests/RpmhCrDxeTest.c
+@@ -551,6 +551,73 @@ TestEntryValidationAndCleanup (
+   assert (mRails[2].EnableClient != NULL);
+ }
+ 
++STATIC
++VOID
++TestAcquireFailureOwnership (VOID)
++{
++  UINTN Stage;
++  BOOLEAN Owned;
++  for (Stage = 1; Stage <= 3; Stage++) {
++    ResetMock ();
++    StartDriver ();
++    mFailScalarAt = Stage;
++    assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob5", 880, 7,
++                                   &Owned) == EFI_DEVICE_ERROR && Owned);
++    assert (mRails[0].ReferenceCount == 1);
++    assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob5", 880, 7,
++                                   &Owned) == EFI_ACCESS_DENIED && !Owned);
++    mFailScalarAt = mScalarCalls + 1;
++    assert (ProtocolRpmhEnableVreg (&gRpmhCrProtocol, "ldob5", FALSE) == EFI_DEVICE_ERROR);
++    assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob5", 880, 7,
++                                   &Owned) == EFI_NOT_READY && !Owned);
++    mFailScalarAt = 0;
++    assert (ProtocolRpmhEnableVreg (&gRpmhCrProtocol, "ldob5", FALSE) == EFI_SUCCESS);
++    assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob5", 880, 7,
++                                   &Owned) == EFI_SUCCESS && Owned);
++    assert (ProtocolRpmhEnableVreg (&gRpmhCrProtocol, "ldob5", FALSE) == EFI_SUCCESS);
++  }
++}
++
++STATIC
++VOID
++TestSharedConsumerPartialFailure (VOID)
++{
++  BOOLEAN Owned;
++  UINTN Calls;
++  ResetMock ();
++  StartDriver ();
++  /* Existing consumer owns l6b; display must not undo it on rejection. */
++  assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob6", 1200, 7,
++                                 &Owned) == EFI_SUCCESS && Owned);
++  Calls = mScalarCalls;
++  assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob6", 1000, 7,
++                                 &Owned) == EFI_ACCESS_DENIED && !Owned);
++  assert (mRails[1].ReferenceCount == 1 && mScalarCalls == Calls);
++  assert (ProtocolRpmhSetVregVoltage (&gRpmhCrProtocol, "ldob6", 1000) ==
++          EFI_ACCESS_DENIED);
++  assert (ProtocolRpmhSetVregMode (&gRpmhCrProtocol, "ldob6", 3) ==
++          EFI_ACCESS_DENIED);
++  assert (mScalarCalls == Calls);
++  assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob6", 1200, 7,
++                                 &Owned) == EFI_SUCCESS && Owned);
++  assert (mRails[1].ReferenceCount == 2 && mScalarCalls == Calls);
++  /* Display's second rail fails at mode: it owns only its partial l5b
++     transaction and one of the two l6b references. */
++  mFailScalarAt = mScalarCalls + 2;
++  assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob5", 880, 7,
++                                 &Owned) == EFI_DEVICE_ERROR && Owned);
++  assert (ProtocolRpmhAcquireVreg (&gRpmhCrProtocol, "ldob5", 880, 7,
++                                 &Owned) == EFI_ACCESS_DENIED && !Owned);
++  assert (ProtocolRpmhEnableVreg (&gRpmhCrProtocol, "ldob5", FALSE) == EFI_SUCCESS);
++  Calls = mScalarCalls;
++  assert (ProtocolRpmhEnableVreg (&gRpmhCrProtocol, "ldob6", FALSE) == EFI_SUCCESS);
++  assert (mRails[1].ReferenceCount == 1 && mScalarCalls == Calls);
++  assert (mRails[1].EnableRequested && mRails[1].ModeRequested &&
++          mRails[1].VoltageRequested);
++  assert (ProtocolRpmhEnableVreg (&gRpmhCrProtocol, "ldob6", FALSE) == EFI_SUCCESS);
++  assert (mScalarCalls == Calls + 3);
++}
++
+ int
+ main (
+   void
+@@ -558,6 +625,8 @@ main (
+ {
+   TestEntryCreatesUniqueRequiredClients ();
+   TestOrderedVotesAndSharedReference ();
++  TestSharedConsumerPartialFailure ();
++  TestAcquireFailureOwnership ();
+   TestPreEnableRollbackAndReleaseRetry ();
+   TestFailedEnableOwnershipAndInputLimits ();
+   TestEntryValidationAndCleanup ();
+diff --git a/Tests/run_mu_bus_tests.py b/Tests/run_mu_bus_tests.py
+index 2970356..5101912 100644
+--- a/Tests/run_mu_bus_tests.py
++++ b/Tests/run_mu_bus_tests.py
+@@ -13,12 +13,13 @@ args = parser.parse_args()
+ with tempfile.TemporaryDirectory(prefix="crane-mu-bus-test-") as tmp:
+     common = [
+         args.cc, "-std=c11", "-fshort-wchar", "-g", "-O1",
+-        "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
++        "-Wall", "-Wextra", "-Werror", "-DCRANE_HOST_TEST",
++        "-fsanitize=address,undefined",
+         "-I" + str(crane / "Include"),
+         "-I" + str(args.edk2 / "MdePkg/Include"),
+         "-I" + str(args.edk2 / "MdePkg/Include/X64"),
+     ]
+-    for source in ["I2cCrTest.c", "SpiCrTest.c"]:
++    for source in ["I2cCrTest.c", "SpiCrTest.c", "Lt9611I2cTest.c"]:
+         exe = Path(tmp) / Path(source).stem
+         subprocess.run(common + [str(crane / "Tests" / source), "-o", str(exe)],
+                        check=True)
+diff --git a/Tests/GeniPinmuxTest.h b/Tests/GeniPinmuxTest.h
+new file mode 100644
+index 0000000..3114710
+--- /dev/null
++++ b/Tests/GeniPinmuxTest.h
+@@ -0,0 +1,38 @@
++/** @file Pinmux failures must prevent starting an I2C transaction. SPDX-License-Identifier: MIT */
++static EFI_STATUS PinLocateStatus;
++static UINTN PinCalls;
++static UINTN PinFailAt;
++static EFI_STATUS EFIAPI TestConfigPin (EFI_GPIO_CR_PROTOCOL *This,
++                                      GpioConfigParams *Config) {
++  (VOID)This;
++  assert (Config->PinNumber == 32 + PinCalls);
++  /* pinctrl-sm8450.c: PINGROUP(32/33, qup9, ibi_i3c, ...), f1. */
++  assert (Config->FunctionSel == GPIO_FUNC_1);
++  ++PinCalls;
++  return PinCalls == PinFailAt ? EFI_DEVICE_ERROR : EFI_SUCCESS;
++}
++static EFI_GPIO_CR_PROTOCOL PinProtocol;
++static EFI_STATUS EFIAPI LocatePins (EFI_GUID *Guid, VOID *Registration, VOID **Interface) {
++  (VOID)Registration;
++  assert (Guid == &gEfiGpioCrProtocolGuid);
++  *Interface = EFI_ERROR (PinLocateStatus) ? NULL : &PinProtocol;
++  return PinLocateStatus;
++}
++static void TestPinmux (void) {
++  EFI_LOCATE_PROTOCOL Saved = BootServices.LocateProtocol;
++  BootServices.LocateProtocol = LocatePins;
++  PinLocateStatus = EFI_NOT_FOUND;
++  assert (TEST_CONFIGURE_PINS () == EFI_NOT_FOUND);
++  PinLocateStatus = EFI_SUCCESS;
++  assert (TEST_CONFIGURE_PINS () == EFI_NOT_READY);
++  PinProtocol.ConfigGpio = TestConfigPin;
++  for (PinFailAt = 1; PinFailAt <= 2; ++PinFailAt) {
++    PinCalls = 0;
++    assert (TEST_CONFIGURE_PINS () == EFI_DEVICE_ERROR);
++    assert (PinCalls == PinFailAt);
++  }
++  PinFailAt = PinCalls = 0;
++  assert (TEST_CONFIGURE_PINS () == EFI_SUCCESS);
++  assert (PinCalls == 2);
++  BootServices.LocateProtocol = Saved;
++}
+diff --git a/Tests/GeniTestCommon.h b/Tests/GeniTestCommon.h
+new file mode 100644
+index 0000000..88bde72
+--- /dev/null
++++ b/Tests/GeniTestCommon.h
+@@ -0,0 +1,61 @@
++/** @file Linux-derived GENI transport behavior test support. SPDX-License-Identifier: MIT */
++#include <assert.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#undef NULL
++#include <Uefi.h>
++#include <Library/BaseMemoryLib.h>
++#include <Library/CacheMaintenanceLib.h>
++#include <Library/DebugLib.h>
++#include <Library/MemoryAllocationLib.h>
++#include <Library/SynchronizationLib.h>
++#include <Library/CrDalLib.h>
++
++static EFI_BOOT_SERVICES BootServices;
++EFI_BOOT_SERVICES *gBS = &BootServices;
++EFI_GUID gEfiQupCrProtocolGuid;
++EFI_GUID gEfiClockCrProtocolGuid;
++EFI_GUID gEfiInterconnectCrProtocolGuid;
++EFI_GUID gEfiGpioCrProtocolGuid;
++static CR_TARGET_QUP_WRAPPER TestWrapper = {
++  .Id = 1, .SerialEngineCount = 2, .SerialEngineBase = {0, 0xa84000}
++};
++static CR_TARGET_QUP_CONTEXT TestContext = {.Qup = &TestWrapper, .QupCount = 1};
++CONST CR_TARGET_QUP_CONTEXT *CrDalGetQupContext (VOID) { return &TestContext; }
++VOID *EFIAPI AllocateZeroPool (UINTN Size) { return calloc (1, Size); }
++VOID EFIAPI FreePool (VOID *Buffer) { free (Buffer); }
++VOID *EFIAPI CopyMem (VOID *D, CONST VOID *S, UINTN N) { return memcpy (D, S, N); }
++VOID *EFIAPI ZeroMem (VOID *D, UINTN N) { return memset (D, 0, N); }
++UINT32 EFIAPI InterlockedCompareExchange32 (volatile UINT32 *P, UINT32 C, UINT32 E) {
++  UINT32 Old = *P;
++  if (Old == C) *P = E;
++  return Old;
++}
++BOOLEAN EFIAPI DebugPrintEnabled (VOID) { return FALSE; }
++BOOLEAN EFIAPI DebugPrintLevelEnabled (CONST UINTN Level) { (VOID)Level; return FALSE; }
++VOID EFIAPI DebugPrint (UINTN Level, CONST CHAR8 *Format, ...) { (VOID)Level; (VOID)Format; }
++static void (*TestWriteBackHook)(VOID *Start, UINTN Length);
++VOID *EFIAPI WriteBackDataCacheRange (VOID *Start, UINTN Length) {
++  if (TestWriteBackHook != NULL) TestWriteBackHook (Start, Length);
++  return Start;
++}
++VOID *EFIAPI InvalidateDataCacheRange (VOID *Start, UINTN Length) { (VOID)Length; return Start; }
++
++#include "../Driver/QUPCrDxe/QUPCrDxe.c"
++
++static void TestOwnership (void) {
++  UINT8 FifoOwner, GpiOwner;
++  mQupContext = &TestContext;
++  assert (QupAcquireSe (&mQupProtocol, 1, 1, &FifoOwner, QupCrSeFifo) == EFI_SUCCESS);
++  assert (QupAcquireSe (&mQupProtocol, 1, 1, &GpiOwner, QupCrSeGpi) == EFI_ALREADY_STARTED);
++  assert (QupReleaseSe (&mQupProtocol, 1, 1, &GpiOwner, TRUE) == EFI_ACCESS_DENIED);
++  assert (QupReleaseSe (&mQupProtocol, 1, 1, &FifoOwner, TRUE) == EFI_SUCCESS);
++  assert (QupAcquireSe (&mQupProtocol, 1, 1, &GpiOwner, QupCrSeGpi) == EFI_SUCCESS);
++  assert (QupAcquireSe (&mQupProtocol, 1, 1, &FifoOwner, QupCrSeFifo) == EFI_ALREADY_STARTED);
++  assert (QupReleaseSe (&mQupProtocol, 1, 1, &GpiOwner, FALSE) == EFI_DEVICE_ERROR);
++  assert (QupReleaseSe (&mQupProtocol, 1, 1, &GpiOwner, TRUE) == EFI_DEVICE_ERROR);
++  assert (QupAcquireSe (&mQupProtocol, 1, 1, &FifoOwner, QupCrSeFifo) == EFI_DEVICE_ERROR);
++  ZeroMem (mSeOwners, sizeof (mSeOwners));
++}
+diff --git a/Tests/GpiDmaLifetimeTest.h b/Tests/GpiDmaLifetimeTest.h
+new file mode 100644
+index 0000000..e618f90
+--- /dev/null
++++ b/Tests/GpiDmaLifetimeTest.h
+@@ -0,0 +1,98 @@
++/** @file IOMMU failure injection for actual GPI allocation code. SPDX-License-Identifier: MIT */
++static UINT8 DmaAllocation[EFI_PAGE_SIZE];
++static UINT32 DmaMapCalls, DmaUnmapCalls, DmaFreeCalls, DmaAttributeCalls;
++static BOOLEAN DmaPartial, DmaFailAttribute, DmaFailUnmap, DmaFailFree;
++static EFI_STATUS EFIAPI DmaAllocate (EDKII_IOMMU_PROTOCOL *This,
++    EFI_ALLOCATE_TYPE Type, EFI_MEMORY_TYPE MemoryType, UINTN Pages,
++    VOID **Host, UINT64 Attributes) {
++  (VOID)This; (VOID)Type; (VOID)MemoryType; (VOID)Attributes;
++  assert (Pages == 1); *Host = DmaAllocation; return EFI_SUCCESS;
++}
++static EFI_STATUS EFIAPI DmaMap (EDKII_IOMMU_PROTOCOL *This,
++    EDKII_IOMMU_OPERATION Operation, VOID *Host, UINTN *Bytes,
++    EFI_PHYSICAL_ADDRESS *Device, VOID **Mapping) {
++  (VOID)This;
++  assert (Operation == EdkiiIoMmuOperationBusMasterCommonBuffer64);
++  assert (Host == DmaAllocation && *Bytes == EFI_PAGE_SIZE);
++  ++DmaMapCalls;
++  if (DmaPartial) --*Bytes;
++  *Device = 0x400000; *Mapping = DmaAllocation; return EFI_SUCCESS;
++}
++static EFI_STATUS EFIAPI DmaAttribute (EDKII_IOMMU_PROTOCOL *This,
++    UINT64 Base, UINT32 Sid, VOID *Mapping, UINT64 Access) {
++  (VOID)This;
++  assert (Base == 0x15000000 && Sid == GPI_SID && Mapping == DmaAllocation);
++  assert (Access == (EDKII_IOMMU_ACCESS_READ | EDKII_IOMMU_ACCESS_WRITE));
++  ++DmaAttributeCalls;
++  return DmaFailAttribute ? EFI_DEVICE_ERROR : EFI_SUCCESS;
++}
++static EFI_STATUS EFIAPI DmaUnmap (EDKII_IOMMU_PROTOCOL *This, VOID *Mapping) {
++  (VOID)This; assert (Mapping == DmaAllocation); ++DmaUnmapCalls;
++  return DmaFailUnmap ? EFI_DEVICE_ERROR : EFI_SUCCESS;
++}
++static EFI_STATUS EFIAPI DmaFree (EDKII_IOMMU_PROTOCOL *This, UINTN Pages, VOID *Host) {
++  (VOID)This; assert (Pages == 1 && Host == DmaAllocation); ++DmaFreeCalls;
++  return DmaFailFree ? EFI_DEVICE_ERROR : EFI_SUCCESS;
++}
++static EDKII_IOMMU_PROTOCOL DmaIommu = {
++  .AllocateBuffer = DmaAllocate, .Map = DmaMap, .SetAttributeById = DmaAttribute,
++  .Unmap = DmaUnmap, .FreeBuffer = DmaFree
++};
++static UINT8 DeviceRingMemory[EFI_PAGE_SIZE];
++static void PublishRingMemory (VOID *Start, UINTN Length) {
++  assert (Start == DmaAllocation && Length == sizeof (DeviceRingMemory));
++  memcpy (DeviceRingMemory, Start, Length);
++}
++static void TestRingCacheVisibility (void) {
++  GPI_RING Ring = {0};
++  ZeroMem (&mGpi, sizeof (mGpi));
++  mGpi.Iommu = &DmaIommu;
++  DmaPartial = DmaFailAttribute = DmaFailUnmap = DmaFailFree = FALSE;
++  /* Model non-coherent memory: CPU stores do not reach the device until
++     cache writeback. Both reused memory and its CPU copy begin nonzero. */
++  memset (DmaAllocation, 0xa5, sizeof (DmaAllocation));
++  memset (DeviceRingMemory, 0xa5, sizeof (DeviceRingMemory));
++  TestWriteBackHook = PublishRingMemory;
++  assert (GpiRingAllocate (GPI_EVENT_ELEMENTS, &Ring) == EFI_SUCCESS);
++  TestWriteBackHook = NULL;
++  for (UINTN Index = 0; Index < sizeof (DeviceRingMemory); ++Index)
++    assert (DeviceRingMemory[Index] == 0);
++  GpiRingFree (&Ring);
++  assert (Ring.Host == NULL);
++  puts ("GPI DMA: initialized event ring visible to non-coherent device before publication passed");
++}
++static void TestDmaLifetime (void) {
++  TestRingCacheVisibility ();
++  for (UINT32 Fault = 0; Fault < 6; ++Fault) {
++    GPI_RING Ring = {0};
++    ZeroMem (&mGpi, sizeof (mGpi));
++    mGpi.Iommu = &DmaIommu;
++    DmaMapCalls = DmaUnmapCalls = DmaFreeCalls = DmaAttributeCalls = 0;
++    DmaPartial = Fault < 2;
++    DmaFailAttribute = Fault == 2 || Fault == 3;
++    DmaFailUnmap = Fault == 1 || Fault == 3 || Fault == 4;
++    DmaFailFree = Fault == 5;
++    EFI_STATUS Status = GpiRingAllocate (16, &Ring);
++    if (Fault < 4) {
++      assert (Status == (DmaPartial ? EFI_BAD_BUFFER_SIZE : EFI_DEVICE_ERROR));
++      assert (DmaAttributeCalls == (DmaPartial ? 0U : 1U));
++    } else {
++      assert (Status == EFI_SUCCESS);
++      GpiRingFree (&Ring);
++    }
++    assert (DmaUnmapCalls == 1);
++    if (DmaFailUnmap || DmaFailFree) {
++      assert (mGpi.DmaCleanupFailed && Ring.Host == DmaAllocation && Ring.Pages == 1);
++      assert (Ring.Mapping == (DmaFailUnmap ? DmaAllocation : NULL));
++      assert (DmaFreeCalls == (DmaFailUnmap ? 0U : 1U));
++      assert (GpiInitialize (GPI_I2C_INSTANCE) == EFI_DEVICE_ERROR);
++      assert (DmaMapCalls == 1);
++      DmaFailUnmap = DmaFailFree = FALSE;
++      GpiRingFree (&Ring);
++      assert (Ring.Host == NULL);
++    } else {
++      assert (Ring.Host == NULL && DmaFreeCalls == 1);
++    }
++  }
++  puts ("GPI DMA: short mapping rejection, failed unmap/free retention and retry fencing passed");
++}
+diff --git a/Tests/GpiTransportTest.c b/Tests/GpiTransportTest.c
+new file mode 100644
+index 0000000..04fcde3
+--- /dev/null
++++ b/Tests/GpiTransportTest.c
+@@ -0,0 +1,283 @@
++/** @file Qualcomm GPI ring, completion and quiescence tests. SPDX-License-Identifier: MIT */
++#include "GeniTestCommon.h"
++#include "../Driver/GpiCrDxe/GpiCrDxe.c"
++
++#define TEST_CONFIGURE_PINS GpiConfigurePins
++#include "GeniPinmuxTest.h"
++#include "GpiDmaLifetimeTest.h"
++
++EFI_GUID gEfiGpiCrProtocolGuid;
++EFI_GUID gEfiSmmuCrProtocolGuid;
++EFI_GUID gEdkiiIoMmuProtocolGuid;
++
++static UINT32 Registers[0x30000 / 4];
++static UINT32 SeRegisters[0x1000 / 4];
++static UINT32 TxData[64], RxData[64], Events[256], DmaData[1024];
++static UINT32 TxHardwareOffset, RxHardwareOffset, EventProducer;
++static UINT32 Writes, Completions, Aborts, Releases;
++static BOOLEAN TransferTimeout, StopTimeout, AbortTimeout, WrongPointer, WrongLength;
++static BOOLEAN EventResetTimeout;
++static BOOLEAN CheckLease;
++static UINT32 NotifyStatus, CompletionStatus;
++
++UINT32 EFIAPI MmioRead32 (UINTN Address) {
++  if (Address >= mGpi.SeBase && Address < mGpi.SeBase + sizeof (SeRegisters))
++    return SeRegisters[(Address - mGpi.SeBase) / 4];
++  assert (Address >= mGpi.GpiBase && Address < mGpi.GpiBase + sizeof (Registers));
++  return Registers[(Address - mGpi.GpiBase) / 4];
++}
++
++static void CompleteDoorbell (UINT8 Channel, UINT32 Value) {
++  GPI_RING *Ring = Channel == GPI_TX_CH ? &mGpi.TxRing : &mGpi.RxRing;
++  UINT32 *HardwareOffset = Channel == GPI_TX_CH ? &TxHardwareOffset : &RxHardwareOffset;
++  UINT32 End = Value - (UINT32)Ring->Device;
++  assert (End < Ring->Length && End % GPI_EL_SIZE == 0);
++  while (*HardwareOffset != End) {
++    UINT32 *Tre = (UINT32 *)((UINT8 *)Ring->Host + *HardwareOffset);
++    UINT32 Type = (Tre[3] >> 16) & 0xff;
++    /* A skipped slot or stale element cannot be interpreted as a valid TRE. */
++    assert (Type == GPI_TRE_CONFIG0 || Type == GPI_TRE_GO || Type == GPI_TRE_DMA);
++    if (Type == GPI_TRE_DMA && !TransferTimeout) {
++      if (NotifyStatus != 0) {
++        UINT32 *Notify = (UINT32 *)((UINT8 *)mGpi.EventRing.Host + EventProducer);
++        Notify[0] = NotifyStatus;
++        Notify[1] = Notify[2] = 0;
++        Notify[3] = (GPI_EVENT_QUP_NOTIFY << 16) | ((UINT32)Channel << 24);
++        EventProducer = (EventProducer + GPI_EL_SIZE) % mGpi.EventRing.Length;
++      }
++      UINT32 *Event = (UINT32 *)((UINT8 *)mGpi.EventRing.Host + EventProducer);
++      EFI_PHYSICAL_ADDRESS Pointer = Ring->Device + *HardwareOffset + (WrongPointer ? 16 : 0);
++      Event[0] = (UINT32)Pointer;
++      Event[1] = (UINT32)(Pointer >> 32);
++      Event[2] = (GPI_EVENT_EOT << 24) | (Tre[2] - (WrongLength ? 1 : 0));
++      Event[3] = (GPI_EVENT_XFER_COMPLETE << 16) | ((UINT32)Channel << 24) | CompletionStatus;
++      EventProducer = (EventProducer + GPI_EL_SIZE) % mGpi.EventRing.Length;
++      Registers[(GPI_EV_CTX (GPII_ID) + GPI_RING_RP_L) / 4] =
++        (UINT32)(mGpi.EventRing.Device + EventProducer);
++      Registers[(GPI_EV_CTX (GPII_ID) + GPI_RING_RP_H) / 4] =
++        (UINT32)(mGpi.EventRing.Device >> 32);
++      ++Completions;
++    }
++    /* Model hardware consuming the TRE.  Reusing it without writing a new
++       element must fail, including at the ring wrap boundary. */
++    ZeroMem (Tre, GPI_EL_SIZE);
++    *HardwareOffset = (*HardwareOffset + GPI_EL_SIZE) % Ring->Length;
++  }
++}
++
++UINT32 EFIAPI MmioWrite32 (UINTN Address, UINT32 Value) {
++  ++Writes;
++  if (CheckLease) assert (mSeOwners[1][1].Busy != 0);
++  if (Address >= mGpi.SeBase && Address < mGpi.SeBase + sizeof (SeRegisters)) {
++    UINTN Offset = Address - mGpi.SeBase;
++    if (Offset == SE_M_IRQ_CLEAR) SeRegisters[SE_M_IRQ_STATUS / 4] &= ~Value;
++    else SeRegisters[Offset / 4] = Value;
++    if (Offset == SE_M_CMD_CTRL && Value == BIT (1)) {
++      ++Aborts;
++      if (!AbortTimeout) {
++        SeRegisters[SE_M_IRQ_STATUS / 4] |= SE_M_CMD_ABORT;
++        SeRegisters[SE_GENI_STATUS / 4] = 0;
++      }
++    }
++    return Value;
++  }
++  UINTN Offset = Address - mGpi.GpiBase;
++  assert (Offset < sizeof (Registers));
++  if (Offset == GPI_CH_CMD (GPII_ID) || Offset == GPI_EV_CMD (GPII_ID)) {
++    BOOLEAN Event = Offset == GPI_EV_CMD (GPII_ID);
++    UINT32 Channel = Value & 0xff;
++    UINT32 Opcode = Value >> 24;
++    UINTN Config = Event ? GPI_EV_CTX (GPII_ID) : GPI_CH_CTX (GPII_ID, Channel);
++    assert (Channel < 2);
++    if (Opcode == 2 && StopTimeout) return Value;
++    if (Event && Opcode == 9 && EventResetTimeout) return Value;
++    /* Linux: DEALLOC acknowledges but leaves the hardware state unchanged. */
++    UINT32 State = Opcode == 10 ? GPI_STATE (Registers[Config / 4]) :
++        Opcode == 0 || Opcode == 9 ? 1 : Opcode == 1 ? 2 : Opcode == 2 ? 3 : 0;
++    Registers[Config / 4] = (Registers[Config / 4] & ~(0xfU << 20)) | (State << 20);
++    Registers[(Event ? GPI_EV_CTRL_STATUS (GPII_ID) : GPI_CH_CTRL_STATUS (GPII_ID)) / 4] |=
++        Event ? BIT (0) : BIT (Channel);
++    if (Opcode == 0 || Opcode == 9) {
++      if (Event) {
++        EventProducer = 0;
++        Registers[(Config + GPI_RING_RP_L) / 4] = (UINT32)mGpi.EventRing.Device;
++      } else if (Channel == GPI_TX_CH) TxHardwareOffset = 0;
++      else RxHardwareOffset = 0;
++    }
++  } else if (Offset == GPI_EV_CTRL_CLEAR (GPII_ID)) {
++    Registers[GPI_EV_CTRL_STATUS (GPII_ID) / 4] &= ~Value;
++  } else if (Offset == GPI_CH_CTRL_CLEAR (GPII_ID)) {
++    Registers[GPI_CH_CTRL_STATUS (GPII_ID) / 4] &= ~Value;
++  } else if (Offset == GPI_CH_CTX (GPII_ID, 0) ||
++             Offset == GPI_CH_CTX (GPII_ID, 1) || Offset == GPI_EV_CTX (GPII_ID)) {
++    Registers[Offset / 4] = (Value & ~(0xfU << 20)) | (Registers[Offset / 4] & (0xfU << 20));
++  } else {
++    Registers[Offset / 4] = Value;
++    if (Offset == GPI_CH_DB (GPII_ID, GPI_TX_CH)) CompleteDoorbell (GPI_TX_CH, Value);
++    if (Offset == GPI_CH_DB (GPII_ID, GPI_RX_CH)) CompleteDoorbell (GPI_RX_CH, Value);
++  }
++  return Value;
++}
++UINTN EFIAPI MicroSecondDelay (UINTN Delay) { return Delay; }
++
++static EFI_STATUS EFIAPI Locate (EFI_GUID *Guid, VOID *Registration, VOID **Interface) {
++  (VOID)Registration;
++  assert (Guid == &gEfiQupCrProtocolGuid);
++  *Interface = &mQupProtocol;
++  return EFI_SUCCESS;
++}
++static EFI_STATUS EFIAPI Release (EFI_QUP_CR_PROTOCOL *This, UINT8 Wrapper,
++                                  UINT8 Engine, VOID *Owner, BOOLEAN Quiesced) {
++  ++Releases;
++  if (Quiesced) {
++    assert (!mGpi.ChannelTouched[0] && !mGpi.ChannelTouched[1] && !mGpi.EventTouched);
++    assert (SeRegisters[SE_GSI_EVENT_EN / 4] == 0);
++  }
++  return QupReleaseSe (This, Wrapper, Engine, Owner, Quiesced);
++}
++static void Reset (void) {
++  ZeroMem (&mGpi, sizeof (mGpi));
++  ZeroMem (mSeOwners, sizeof (mSeOwners));
++  ZeroMem (Registers, sizeof (Registers));
++  ZeroMem (SeRegisters, sizeof (SeRegisters));
++  SeRegisters[SE_GENI_FW_REVISION_RO / 4] = 3U << 8;
++  ZeroMem (TxData, sizeof (TxData));
++  ZeroMem (RxData, sizeof (RxData));
++  ZeroMem (Events, sizeof (Events));
++  mQupContext = &TestContext;
++  mQupProtocol.ReleaseSe = Release;
++  BootServices.LocateProtocol = Locate;
++  mGpi.Protocol = mGpiProtocol;
++  mGpi.Qup = &mQupProtocol;
++  mGpi.GpiBase = 0x9f0000;
++  mGpi.SeBase = 0xa84000;
++  mGpi.TxRing = (GPI_RING){.Host = TxData, .Device = 0x100000, .Length = sizeof (TxData), .ElSize = 16};
++  mGpi.RxRing = (GPI_RING){.Host = RxData, .Device = 0x200000, .Length = sizeof (RxData), .ElSize = 16};
++  mGpi.EventRing = (GPI_RING){.Host = Events, .Device = 0x300000, .Length = sizeof (Events), .ElSize = 16};
++  mGpi.Data = (GPI_BUFFER){.Host = DmaData, .Device = 0x400000, .Pages = 1};
++  mGpi.Initialized = TRUE;
++  TxHardwareOffset = RxHardwareOffset = EventProducer = Writes = Completions = Aborts = Releases = 0;
++  TransferTimeout = StopTimeout = AbortTimeout = WrongPointer = WrongLength = FALSE;
++  EventResetTimeout = FALSE;
++  CheckLease = TRUE;
++  NotifyStatus = CompletionStatus = 0;
++}
++static void TestProtocolErrors (void) {
++  UINT8 Buffer = 0;
++  const UINT32 NotifyBits[] = {BIT (10), BIT (12), BIT (13)};
++  const UINT32 CompletionBits[] = {BIT (6), BIT (8), BIT (9)};
++  for (UINT32 Read = 0; Read < 2; ++Read) {
++    EFI_GPI_I2C_DESCRIPTOR Desc = {&Buffer, 1,
++      EFI_GPI_I2C_FLAG_START | EFI_GPI_I2C_FLAG_STOP |
++      (Read ? EFI_GPI_I2C_FLAG_READ : EFI_GPI_I2C_FLAG_WRITE)};
++    for (UINT32 Index = 0; Index < 6; ++Index) {
++      UINT32 Transferred = 1;
++      Reset ();
++      if (Index < 3) NotifyStatus = NotifyBits[Index];
++      else CompletionStatus = CompletionBits[Index - 3];
++      assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, &Desc, 1,
++          &Transferred) == EFI_DEVICE_ERROR);
++      assert (Transferred == 0 && Aborts == 1 && mSeOwners[1][1].Busy == 0);
++    }
++    /* A notification without the documented I2C error bits is harmless. */
++    Reset ();
++    NotifyStatus = BIT (0);
++    assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, &Desc, 1, NULL) == EFI_SUCCESS);
++    Reset ();
++    NotifyStatus = BIT (10);
++    CompletionStatus = BIT (6);
++    SeRegisters[SE_M_GP_LENGTH / 4] = 1;
++    assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, &Desc, 1, NULL) ==
++        (Read ? EFI_SUCCESS : EFI_DEVICE_ERROR));
++  }
++}
++static void TestTransfers (void) {
++  UINT8 Buffer[8] = {0};
++  EFI_GPI_I2C_DESCRIPTOR Descs[40];
++  UINT32 Transferred;
++  Reset ();
++  for (UINT32 Index = 0; Index < 40; ++Index)
++    Descs[Index] = (EFI_GPI_I2C_DESCRIPTOR){Buffer, sizeof (Buffer),
++        EFI_GPI_I2C_FLAG_START | EFI_GPI_I2C_FLAG_STOP |
++        (Index % 2 ? EFI_GPI_I2C_FLAG_READ : EFI_GPI_I2C_FLAG_WRITE)};
++  assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, Descs, 40, &Transferred) == EFI_SUCCESS);
++  assert (Transferred == 320 && Completions == 40 && Releases == 1);
++  /* Recycled EREs remain device-owned: never dirty their shared cache line
++     by clearing the consumed element from the CPU. */
++  assert (Events[3] == (GPI_EVENT_XFER_COMPLETE << 16));
++  assert (mSeOwners[1][1].Busy == 0);
++  /* Cross-request reinitialization starts at element zero again. */
++  assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, Descs, 2, &Transferred) == EFI_SUCCESS);
++  assert (Transferred == 16 && Completions == 42 && Releases == 2);
++}
++static void TestValidation (void) {
++  UINT8 Buffer = 0;
++  EFI_GPI_I2C_DESCRIPTOR Descs[] = {{&Buffer, 1, 5}, {&Buffer, 1, 7}};
++  Reset ();
++  Descs[1].Length = EFI_PAGE_SIZE + 1;
++  assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, Descs, 2, NULL) == EFI_BAD_BUFFER_SIZE);
++  Descs[1].Length = 1; Descs[1].Flags = 5;
++  assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, Descs, 2, NULL) == EFI_INVALID_PARAMETER);
++  Descs[1].Flags = 0x87;
++  assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, Descs, 2, NULL) == EFI_INVALID_PARAMETER);
++  assert (Writes == 0 && Releases == 0);
++}
++static void TestFailures (void) {
++  UINT8 Buffer = 0;
++  EFI_GPI_I2C_DESCRIPTOR Desc = {&Buffer, 1, 7};
++  for (UINT32 Fault = 0; Fault < 6; ++Fault) {
++    Reset ();
++    TransferTimeout = Fault <= 1;
++    AbortTimeout = Fault == 1;
++    StopTimeout = Fault == 2;
++    WrongPointer = Fault == 3;
++    WrongLength = Fault == 4;
++    EventResetTimeout = Fault == 5;
++    assert (EFI_ERROR (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, &Desc, 1, NULL)));
++    assert (Releases == 1 && mGpi.Data.Host == DmaData && mGpi.TxRing.Host == TxData);
++    if (AbortTimeout || StopTimeout || EventResetTimeout) {
++      assert (mSeOwners[1][1].Poisoned);
++      UINT32 Before = Writes;
++      assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, &Desc, 1, NULL) == EFI_DEVICE_ERROR);
++      assert (Before == Writes);
++    } else {
++      assert (Aborts == 1 && mSeOwners[1][1].Busy == 0);
++    }
++  }
++}
++static void TestActiveSe (void) {
++  UINT8 Buffer = 0;
++  EFI_GPI_I2C_DESCRIPTOR Desc = {&Buffer, 1, 7};
++  Reset ();
++  SeRegisters[SE_GENI_STATUS / 4] = BIT (0);
++  assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, &Desc, 1, NULL) == EFI_ACCESS_DENIED);
++  assert (Writes == 0 && Aborts == 0 && Releases == 1);
++  assert (SeRegisters[SE_GENI_STATUS / 4] == BIT (0));
++}
++static void TestFirmware (void) {
++  UINT8 Buffer = 0;
++  EFI_GPI_I2C_DESCRIPTOR Desc = {&Buffer, 1, 7};
++  const UINT32 Protocols[] = {0, 1, 2, 4, 255};
++  for (UINTN Index = 0; Index < ARRAY_SIZE (Protocols); ++Index) {
++    UINT32 Transferred = 1;
++    Reset ();
++    SeRegisters[SE_GENI_FW_REVISION_RO / 4] = Protocols[Index] << 8;
++    assert (GpiI2cTransfer (&mGpi.Protocol, 10, 0x2b, &Desc, 1,
++        &Transferred) == EFI_UNSUPPORTED);
++    assert (Transferred == 0 && Writes == 0 && Aborts == 0 && Releases == 1);
++    assert (mSeOwners[1][1].Busy == 0);
++  }
++}
++int main (void) {
++  TestDmaLifetime ();
++  TestPinmux ();
++  TestOwnership ();
++  TestTransfers ();
++  TestValidation ();
++  TestFailures ();
++  TestActiveSe ();
++  TestFirmware ();
++  TestProtocolErrors ();
++  puts ("GPI: continuous rings/wrap, RX-only completion, event identity, validation and quiescence passed");
++  return 0;
++}
+diff --git a/Tests/I2cFifoTransportTest.c b/Tests/I2cFifoTransportTest.c
+new file mode 100644
+index 0000000..a4034ec
+--- /dev/null
++++ b/Tests/I2cFifoTransportTest.c
+@@ -0,0 +1,129 @@
++/** @file GENI FIFO receive flow-control regression. SPDX-License-Identifier: MIT */
++#include "GeniTestCommon.h"
++#include "../Driver/I2CCrDxe/I2CCrDxe.c"
++
++static UINT32 Registers[0x1000 / 4];
++static UINT32 CommandCount;
++static UINT32 InjectIrq, InjectCommand, AbortCount;
++static BOOLEAN DropReadData, DropDone;
++static EFI_STATUS EFIAPI Pins (EFI_GPIO_CR_PROTOCOL *This, GpioConfigParams *Config) {
++  (VOID)This; (VOID)Config;
++  return EFI_SUCCESS;
++}
++static EFI_GPIO_CR_PROTOCOL Gpio = {.ConfigGpio = Pins};
++static EFI_STATUS EFIAPI Locate (EFI_GUID *Guid, VOID *Registration, VOID **Interface) {
++  (VOID)Registration;
++  if (Guid == &gEfiGpioCrProtocolGuid) *Interface = &Gpio;
++  else if (Guid == &gEfiQupCrProtocolGuid) *Interface = &mQupProtocol;
++  else return EFI_NOT_FOUND;
++  return EFI_SUCCESS;
++}
++UINT32 EFIAPI MmioRead32 (UINTN Address) {
++  UINTN Offset = Address - I2C_FIFO_SE_BASE;
++  assert (Offset < sizeof (Registers));
++  if (Offset == SE_RX_FIFO) {
++    Registers[SE_RX_FIFO_STATUS / 4] = 0;
++    return 0x11;
++  }
++  return Registers[Offset / 4];
++}
++UINT32 EFIAPI MmioWrite32 (UINTN Address, UINT32 Value) {
++  UINTN Offset = Address - I2C_FIFO_SE_BASE;
++  assert (Offset < sizeof (Registers));
++  if (Offset == SE_M_IRQ_CLEAR) Registers[SE_M_IRQ_STATUS / 4] &= ~Value;
++  else Registers[Offset / 4] = Value;
++  if (Offset == SE_M_CMD0) {
++    ++CommandCount;
++    if ((Value >> 27) == I2C_CMD_READ) {
++      /* A zero ready-for-receive threshold backpressures even an empty
++         FIFO. A short chip-ID read must remain receivable below RX_WM. */
++      if (Registers[SE_RX_RFR_WATERMARK / 4] != 0) {
++        Registers[SE_RX_FIFO_STATUS / 4] = DropReadData ? 0 : 1;
++        Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_DONE | SE_M_RX_FIFO_LAST;
++      }
++    } else Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_DONE;
++    if ((Value >> 27) == InjectCommand) {
++      Registers[SE_M_IRQ_STATUS / 4] |= InjectIrq;
++      if (DropDone) Registers[SE_M_IRQ_STATUS / 4] &= ~SE_M_CMD_DONE;
++    }
++  }
++  if (Offset == SE_M_CMD_CTRL) { ++AbortCount; Registers[SE_M_IRQ_STATUS / 4] = SE_M_CMD_ABORT; }
++  return Value;
++}
++UINTN EFIAPI MicroSecondDelay (UINTN Delay) { return Delay; }
++int main (void) {
++  I2C_CR_INSTANCE Instance = {0};
++  MU_I2C_SLAVE_CONFIG Config = {.SlaveAddress = 0x2b, .BusFrequencyKHz = 400,
++                               .Mode = MU_I2C_MODE_I2C};
++  UINT8 Register = 0, Id = 0;
++  MU_I2C_DESCRIPTOR Descriptors[] = {
++    {&Register, 1, MU_I2C_FLAG_START | MU_I2C_FLAG_WRITE},
++    {&Id, 1, MU_I2C_FLAG_START | MU_I2C_FLAG_READ | MU_I2C_FLAG_STOP}
++  };
++  UINT32 Transferred;
++  TestOwnership ();
++  BootServices.LocateProtocol = Locate;
++  Instance.Protocol.Instance = I2C_FIFO_INSTANCE;
++  mFifoResourcesReady = TRUE;
++  Registers[SE_HW_PARAM_0 / 4] = 16U << 16;
++  for (UINT32 Protocol = 0; Protocol < 3; ++Protocol) {
++    Registers[SE_GENI_FW_REVISION_RO / 4] = Protocol << 8;
++    assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++        NULL, NULL, 0, &Transferred) == EFI_UNSUPPORTED);
++    assert (Transferred == 0 && CommandCount == 0 && mSeOwners[1][1].Busy == 0);
++  }
++  Registers[SE_GENI_FW_REVISION_RO / 4] = 3U << 8;
++  Registers[SE_GENI_IF_DISABLE_RO / 4] = BIT (0);
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_UNSUPPORTED);
++  assert (Transferred == 0 && CommandCount == 0 && mSeOwners[1][1].Busy == 0);
++  Registers[SE_GENI_IF_DISABLE_RO / 4] = 0;
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_SUCCESS);
++  assert (Id == 0x11 && Transferred == 2 && CommandCount == 2);
++  assert (Registers[SE_RX_WATERMARK / 4] == 15);
++  assert (Registers[SE_RX_RFR_WATERMARK / 4] == 16);
++  assert (mSeOwners[1][1].Busy == 0);
++  /* Exercise the real repeated-start adapter and error cleanup: terminal
++     read NACK is valid, address/write NACK and independent GP errors are not. */
++  InjectCommand = I2C_CMD_READ;
++  InjectIrq = SE_M_GP_IRQ_1 | SE_M_CMD_FAILURE;
++  Registers[SE_M_GP_LENGTH / 4] = 1;
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_SUCCESS);
++  assert (Transferred == 2 && Id == 0x11 && AbortCount == 0);
++  Registers[SE_M_GP_LENGTH / 4] = 0;
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_DEVICE_ERROR);
++  assert (Transferred == 1 && AbortCount == 1);
++  Registers[SE_M_GP_LENGTH / 4] = 1;
++  InjectCommand = I2C_CMD_WRITE;
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_DEVICE_ERROR);
++  assert (Transferred == 0 && AbortCount == 2);
++  InjectCommand = I2C_CMD_READ;
++  UINT32 Errors[] = {SE_M_GP_IRQ_0, SE_M_GP_IRQ_3, SE_M_GP_IRQ_4,
++                    SE_M_CMD_OVERRUN, SE_M_ILLEGAL_CMD, SE_M_CMD_ABORT};
++  for (UINTN i = 0; i < ARRAY_SIZE (Errors); ++i) {
++    InjectIrq = SE_M_GP_IRQ_1 | SE_M_CMD_FAILURE | Errors[i];
++    assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++        NULL, NULL, 0, &Transferred) == EFI_DEVICE_ERROR);
++    assert (Transferred == 1 && mSeOwners[1][1].Busy == 0);
++  }
++  InjectIrq = SE_M_CMD_FAILURE; /* An unexplained failure is never ignored. */
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_DEVICE_ERROR);
++  assert (Transferred == 1 && mSeOwners[1][1].Busy == 0);
++  InjectIrq = SE_M_GP_IRQ_1 | SE_M_CMD_FAILURE;
++  DropReadData = TRUE;
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_DEVICE_ERROR);
++  assert (Transferred == 1 && mSeOwners[1][1].Busy == 0);
++  DropReadData = FALSE;
++  DropDone = TRUE;
++  assert (I2cCrFifoMuTransfer (&Instance.Protocol, &Config, Descriptors, 2,
++      NULL, NULL, 0, &Transferred) == EFI_TIMEOUT);
++  assert (Transferred == 1 && mSeOwners[1][1].Busy == 0);
++  puts ("FIFO: receive thresholds, repeated-START chip ID and address/data NACK handling passed");
++  return 0;
++}
+diff --git a/Tests/run_geni_transport_tests.py b/Tests/run_geni_transport_tests.py
+new file mode 100644
+index 0000000..7fd0474
+--- /dev/null
++++ b/Tests/run_geni_transport_tests.py
+@@ -0,0 +1,21 @@
++#!/usr/bin/env python3
++"""Run native FIFO/GPI behavior against fake hardware with ASan/UBSan."""
++from pathlib import Path
++import subprocess
++import tempfile
++
++crane = Path(__file__).resolve().parents[1]
++edk2 = crane.parents[1] / "MU_BASECORE"
++with tempfile.TemporaryDirectory(prefix="crane-geni-test-") as tmp:
++    common = ["clang", "-std=c11", "-fshort-wchar", "-g", "-O1",
++              "-Wall", "-Wextra", "-Werror", "-DCRANE_HOST_TEST", "-DCRANE_MMIO_TEST",
++              "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
++              "-ffunction-sections", "-fdata-sections",
++              "-Wl,--gc-sections", "-I" + str(crane / "Include"),
++              "-I" + str(edk2 / "MdePkg/Include"),
++              "-I" + str(edk2 / "MdePkg/Include/X64"),
++              "-I" + str(edk2 / "MdeModulePkg/Include")]
++    for source in ["GpiTransportTest.c", "I2cFifoTransportTest.c"]:
++        exe = Path(tmp) / Path(source).stem
++        subprocess.run(common + [str(crane / "Tests" / source), "-o", str(exe)], check=True)
++        subprocess.run([str(exe)], check=True)

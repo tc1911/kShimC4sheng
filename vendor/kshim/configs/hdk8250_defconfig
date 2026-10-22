@@ -1,0 +1,19 @@
+# Qualcomm SM8250 HDK; independent Kona evidence in hdk8250-touch-provenance.json.
+# Display is discovered from the live SDE state and DT splash reservation.
+# Stock HDK disables ST selection; a valid active panel/touch DT is required.
+# This is a relocatable Manifest runtime; no MTP8250 UEFI payload is substituted.
+CONFIG_QCOM_KEYS=y
+CONFIG_QCOM_SPMI=y
+CONFIG_QCOM_KEY_DEBOUNCE_SAMPLES=2
+# CONFIG_KSHIM_QEMU_PLATFORM is not set
+CONFIG_KSHIM_FRAMEBUFFER=y
+CONFIG_KSHIM_LVGL=y
+CONFIG_KSHIM_LVGL_BUFFER_BYTES=262144
+# CONFIG_KSHIM_UEFI_TEST_MENU is not set
+# CONFIG_ENABLE_BANNER is not set
+CONFIG_DEBUG_LEVEL_NONE=y
+CONFIG_ASSERT_HALT=y
+
+CONFIG_KSHIM_SMP=y
+CONFIG_KSHIM_SMP_WORKERS=7
+CONFIG_KSHIM_TOUCH=y

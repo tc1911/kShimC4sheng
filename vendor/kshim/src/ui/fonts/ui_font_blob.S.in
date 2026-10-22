@@ -1,0 +1,9 @@
+/* The compressed menu font (src/ui/fonts/noto_sans_cjk_sc.ksf). */
+.section .rodata.kshim_ui_font, "a"
+.balign 16
+.global kshim_ui_font_blob
+.global kshim_ui_font_blob_end
+kshim_ui_font_blob:
+.incbin "@KSHIM_UI_FONT_BLOB@"
+kshim_ui_font_blob_end:
+.section .note.GNU-stack, "", %progbits

@@ -1,0 +1,203 @@
+name: Boot menu styles
+
+on:
+  push:
+    branches: ["feature/2610", "feature/2610-design-language"]
+    paths:
+      - "src/ui/**"
+      - "src/include/**"
+      - "src/Kconfig"
+      - "Kconfig"
+      - "tests/**"
+      - "tools/test_menu_styles.py"
+      - "tools/test_theme_design.py"
+      - "tools/generate_design_presets.py"
+      - "tools/preview_manifest.py"
+      - "tools/build_theme_review.py"
+      - "tools/theme_review.html"
+      - ".github/workflows/menu-styles.yml"
+  pull_request:
+    paths:
+      - "src/ui/**"
+      - "src/include/**"
+      - "src/Kconfig"
+      - "Kconfig"
+      - "tests/**"
+      - "tools/test_menu_styles.py"
+      - "tools/test_theme_design.py"
+      - "tools/generate_design_presets.py"
+      - "tools/preview_manifest.py"
+      - "tools/build_theme_review.py"
+      - "tools/theme_review.html"
+      - ".github/workflows/menu-styles.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preset-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Kconfig parser
+        run: |
+          python3 -m venv /tmp/kshim-style-venv
+          /tmp/kshim-style-venv/bin/pip install kconfiglib==14.1.0
+      - name: GCC, Clang and all 30 real Kconfig choices
+        run: |
+          python3 tools/generate_design_presets.py --check
+          /tmp/kshim-style-venv/bin/python tools/test_menu_styles.py --cc gcc --kconfig
+          /tmp/kshim-style-venv/bin/python tools/test_menu_styles.py --cc clang
+          python3 tools/test_theme_design.py --cc gcc --sanitize
+          python3 tools/test_theme_design.py --cc clang
+      - name: Test authentic-frame verification and HTML packaging
+        run: python3 -m unittest discover -s tests -p 'test_theme_review.py' -v
+  lvgl-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        style: [FLAT, CLASSIC, CARDS, TERMINAL, MINIMAL, HIGH_CONTRAST, FLUENT, MATERIAL3, SURFACE, CUPERTINO, GLASS, AURORA, SOFT_UI, BENTO, NEON, NORD, MATERIAL2, MATERIAL2_DARK, FLUENT2, FLUENT2_DARK, FLUENT_DARK, SURFACE_DARK, HARMONYOS, CLOVER, IOS_HIG, METRO, ONE_UI, ADWAITA, HOLO, LVGL_DEFAULT]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install host build dependencies
+        run: sudo apt-get update && sudo apt-get install -y device-tree-compiler ninja-build
+      - name: Configure selected menu style with sanitizers
+        run: cmake -S tests -B build-menu -G Ninja -DKSHIM_TEST_MENU_STYLE=${{ matrix.style }}
+      - name: Build the complete host test suite and real LVGL preview
+        run: cmake --build build-menu --parallel 2
+      - name: Run all host tests, including geometry, input safety and CJK
+        run: ctest --test-dir build-menu --output-on-failure
+      - name: Render actual portrait and landscape LVGL keyframes
+        run: |
+          mkdir -p previews
+          git rev-parse HEAD > previews/source-commit.txt
+          ./build-menu/ui_preview_test previews | tee previews/render.log
+          python3 tools/preview_manifest.py previews
+      - name: Preserve every original theme pixel for pixel
+        if: matrix.style != 'ONE_UI' && matrix.style != 'LVGL_DEFAULT'
+        run: |
+          base=35e9ad38529bcd6ff4222619a344a951d0366120
+          git fetch --depth=1 origin "$base"
+          files="src/ui/lvgl_port.c src/ui/menu_style.h src/ui/menu_design.h src/ui/menu_design_layout.h src/ui/menu_design_port.h src/ui/menu_layout_dispatch.h src/ui/menu_new_themes_render.h src/ui/menu_symbols.h src/include/lv_conf.h tests/ui_preview_test.c"
+          for file in $files; do git show "$base:$file" > "$file"; done
+          cmake --build build-menu --parallel 2 --target ui_preview_test
+          mkdir -p compatibility-baseline
+          ./build-menu/ui_preview_test compatibility-baseline
+          for file in compatibility-baseline/*.ppm; do cmp "$file" "previews/$(basename "$file")"; done
+          for file in $files; do git show "HEAD:$file" > "$file"; done
+          printf 'PASS: %s, both resolutions and all four stages match %s\n' '${{ matrix.style }}' "$base" > previews/compatibility.txt
+      - name: Verify FLAT against the previous renderer pixel for pixel
+        if: matrix.style == 'FLAT'
+        run: |
+          git fetch --depth=1 origin c1a80a45fd577dbb859e78404458477f98ab5d72
+          cp src/ui/lvgl_port.c /tmp/current-lvgl-port.c
+          git show c1a80a45fd577dbb859e78404458477f98ab5d72:src/ui/lvgl_port.c > src/ui/lvgl_port.c
+          cmake --build build-menu --parallel 2 --target ui_preview_test
+          mkdir -p baseline
+          ./build-menu/ui_preview_test baseline
+          for file in baseline/*.ppm; do cmp "$file" "previews/$(basename "$file")"; done
+          cp /tmp/current-lvgl-port.c src/ui/lvgl_port.c
+      - name: Upload actual rendered previews and regression log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: menu-${{ matrix.style }}
+          path: |
+            previews/*.png
+            previews/index.html
+            previews/manifest.json
+            previews/source-commit.txt
+            previews/render.log
+            previews/compatibility.txt
+            build-menu/Testing/Temporary/LastTest.log
+          if-no-files-found: error
+          retention-days: 14
+  new-theme-variants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        style: [METRO, ONE_UI, ADWAITA, HOLO, LVGL_DEFAULT]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install host build dependencies
+        run: sudo apt-get update && sudo apt-get install -y device-tree-compiler ninja-build
+      - name: Build and test explicit 1x scale with reduced effects
+        run: |
+          cmake -S tests -B build-variant -G Ninja -DKSHIM_TEST_MENU_STYLE=${{ matrix.style }} -DKSHIM_TEST_MENU_SCALE_Q8=256 -DKSHIM_TEST_MENU_REDUCED_EFFECTS=ON
+          cmake --build build-variant --parallel 2
+          ctest --test-dir build-variant --output-on-failure
+      - name: Retain variant regression log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: variant-${{ matrix.style }}
+          path: build-variant/Testing/Temporary/LastTest.log
+          if-no-files-found: error
+          retention-days: 14
+  arm64-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        style: [CLASSIC, CARDS, TERMINAL, MINIMAL, HIGH_CONTRAST, FLUENT, MATERIAL3, SURFACE, CUPERTINO, GLASS, AURORA, SOFT_UI, BENTO, NEON, NORD, MATERIAL2, MATERIAL2_DARK, FLUENT2, FLUENT2_DARK, FLUENT_DARK, SURFACE_DARK, HARMONYOS, CLOVER, IOS_HIG, METRO, ONE_UI, ADWAITA, HOLO, LVGL_DEFAULT]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install ARM64 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu ninja-build
+          python3 -m venv /tmp/kshim-build-venv
+          /tmp/kshim-build-venv/bin/pip install kconfiglib==14.1.0
+      - name: Build the real ARM64 runtime for the selected style
+        run: |
+          export PATH="/tmp/kshim-build-venv/bin:$PATH"
+          mkdir -p build-runtime
+          cp configs/qemu_manifest_ui_defconfig build-runtime/.config
+          printf '\nCONFIG_KSHIM_MENU_STYLE_%s=y\n' '${{ matrix.style }}' >> build-runtime/.config
+          cmake -S . -B build-runtime -G Ninja
+          cmake --build build-runtime --parallel 2
+          aarch64-linux-gnu-size build-runtime/kShimC.elf
+          test -s build-runtime/kShimC.bin
+  package-previews:
+    needs: [preset-contracts, lvgl-regression, new-theme-variants, arm64-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect the successful matrix's authentic preview artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: menu-*
+          path: collected
+      - name: Verify original frames and build the offline HTML review
+        run: python3 tools/build_theme_review.py --input collected --output review
+      - name: Upload one review bundle without changing frame bytes
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-menu-previews
+          path: collected/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload the generated HTML, original PNGs and verification record
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-review-html
+          path: review/
+          if-no-files-found: error
+          retention-days: 14

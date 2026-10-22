@@ -1,0 +1,3 @@
+# Top level
+source "$srctree/Kconfig"
+source "$srctree/ui/menu_design.Kconfig"

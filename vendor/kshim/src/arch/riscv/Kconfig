@@ -1,0 +1,22 @@
+choice
+    prompt "MMU Type"
+    default CONFIG_MMU_RISCV_TYPE
+    help
+        Select the MMU type for the RISC-V architecture. The default is SV39.
+    depends on CONFIG_ARCH_AARCH64
+
+    config CONFIG_MMU_RISCV_SV32
+        bool "SV32"
+
+    config CONFIG_MMU_RISCV_SV39
+        bool "SV39"
+
+    config CONFIG_MMU_RISCV_SV48
+        bool "SV48"
+    
+    config CONFIG_MMU_RISCV_SV57
+        bool "SV57"
+    
+    config CONFIG_MMU_RISCV_SV64
+        bool "SV64"
+endchoice

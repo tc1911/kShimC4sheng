@@ -1,0 +1,125 @@
+{
+  "board": "xiaomi-andromeda (Mi Mix 3 5G, SM8150)",
+  "repository": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource",
+  "revision": "74347f5521fb444936f5986ff0937264307d78fe",
+  "files": {
+    "arch/arm64/boot/dts/qcom/andromeda-sm8150.dtsi": "b4c8aecf19d37cba8212b63cdbcfda6842e2cbcd565b7635324a33203f700d86",
+    "arch/arm64/boot/dts/qcom/xiaomi-sdx50-sm8150-common.dtsi": "1334e8b84707648a88bc3028d3ee6c08103f69342aed4596157ad6e69ec8fdd2",
+    "arch/arm64/boot/dts/qcom/sm8150-pmic-overlay.dtsi": "354855803524d280cef24b1b903cacd762c0fe89498765d2a9c329b3100e02c5",
+    "arch/arm64/boot/dts/qcom/pm8150.dtsi": "19a341c0b988399179d7ba281c464ede92be4a10baecac96b54085f662205ae6",
+    "arch/arm64/boot/dts/qcom/sm8150.dtsi": "69e2c9e4e02d0b8c5f084c9d9ee0c3618eac12c63d1d1a73d977562ab6bdf71a",
+    "drivers/input/misc/qpnp-power-on.c": "8226cbe7bfb803ecd58b63329d6b0e872b61dbc25b76cf8f886e81e127d7a718",
+    "drivers/pinctrl/qcom/pinctrl-spmi-gpio.c": "bf9821af89cede5bfffb4e6ea2478d63b4b53d3242c998fce651ec735bcf12b7"
+  },
+  "include_chain": "andromeda-sm8150.dtsi -> xiaomi-sdx50-sm8150-common.dtsi -> sm8150-pmic-overlay.dtsi -> pm8150.dtsi",
+  "keys": {
+    "Power": {
+      "sid": 0,
+      "register": "0x0810",
+      "mask": "0x01",
+      "active_low": false,
+      "evidence": [
+        "pm8150.dtsi:41-67 PON@0x800, KPDPWR -> KEY_POWER",
+        "qpnp-power-on.c:64,122-123,1068-1092: RT_STS=base+0x10, bit0 KPDPWR; set bit means pressed"
+      ]
+    },
+    "VolumeDown": {
+      "sid": 0,
+      "register": "0x0810",
+      "mask": "0x02",
+      "active_low": false,
+      "evidence": [
+        "pm8150.dtsi:63-67 RESIN -> KEY_VOLUMEDOWN",
+        "qpnp-power-on.c:64,122-123,1068-1092: RT_STS=base+0x10, bit1 RESIN; set bit means pressed"
+      ]
+    },
+    "VolumeUp": {
+      "sid": 0,
+      "register": "0xc510",
+      "mask": "0x01",
+      "active_low": true,
+      "evidence": [
+        "xiaomi-sdx50-sm8150-common.dtsi:91-100 PM8150 GPIO6 GPIO_ACTIVE_LOW -> KEY_VOLUMEUP",
+        "pm8150.dtsi:115-131 PM8150 pinctrl base0xc000, GPIO6 IRQ peripheral0xc5",
+        "pinctrl-spmi-gpio.c:31,46-47,666-670,1128: 0x100 per GPIO, RT_STS=base+0x10 bit0"
+      ]
+    }
+  },
+  "spmi": {
+    "core": [
+      "0x0c440000",
+      "0x1100"
+    ],
+    "channel": [
+      "0x0c600000",
+      "0x2000000"
+    ],
+    "observer": [
+      "0x0e600000",
+      "0x100000"
+    ],
+    "config": [
+      "0x0c40a000",
+      "0x26000"
+    ],
+    "ee": 0,
+    "channel_id": 0,
+    "bus_instance": 0,
+    "version": "read from hardware at runtime; v5 resource layout",
+    "evidence": "sm8150.dtsi:1556-1571"
+  },
+  "validation": "Checked pinned vendor source independently of HDK8150; matching key values do not imply shared board wiring; physical phone tests pending",
+  "touch": {
+    "controller": "ST FTM5, chip ID 36 39",
+    "protocol_provenance": "third_party/st-ftm5/UPSTREAM.json",
+    "upstream_selection": "andromeda_user_defconfig CONFIG_TOUCHSCREEN_ST_FTS_V521=y; andromeda-sm8150.dtsi qupv3_se17_i2c/fts@49",
+    "native_size": [
+      1080,
+      2340
+    ],
+    "i2c": {
+      "address": "0x49",
+      "geni_base": "0x00c80000",
+      "wrapper": 2,
+      "engine": 0,
+      "downstream_name": "qupv3_se17_i2c",
+      "bus_gpio": [
+        55,
+        56
+      ],
+      "mux": 1,
+      "drive_mA": 2,
+      "pull": "none"
+    },
+    "gpio": {
+      "gate": {
+        "number": 37,
+        "address": "0x03925000",
+        "startup_delay_us": 4000
+      },
+      "reset": {
+        "number": 54,
+        "address": "0x03d36000",
+        "drive_mA": 8,
+        "pull": "up",
+        "low_us": 10000
+      },
+      "irq": {
+        "number": 122,
+        "address": "0x03d7a000",
+        "drive_mA": 8,
+        "pull": "up after power ACK",
+        "active_low": true
+      }
+    },
+    "power": "Enable GPIO37 AVDD gate, wait 4 ms, enable RPMh XOB ldoc1 (fixed 1.8 V) at resource+4, then pulse reset; preserve shared rail votes on handoff",
+    "evidence": [
+      "andromeda-sm8150.dtsi:12-18,168-198",
+      "sm8150-pinctrl.dtsi:297-309,1609-1623",
+      "pinctrl-sm8150.c:1637,1661-1664,1769",
+      "sm8150-qupv3.dtsi:764-781",
+      "sm8150-regulator.dtsi:671-681",
+      "fts_521/fts.c:2927-3138,5222-5259"
+    ]
+  }
+}

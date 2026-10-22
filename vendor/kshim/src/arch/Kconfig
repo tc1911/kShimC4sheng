@@ -1,0 +1,23 @@
+choice
+    bool
+    prompt "Arch selection"
+    default CONFIG_ARCH_AARCH64
+
+config CONFIG_ARCH_AARCH64
+    bool
+    prompt "ARM64"
+
+config CONFIG_ARCH_ARM
+    bool
+    prompt "ARM"
+
+config CONFIG_ARCH_RISCV
+    bool
+    prompt "RISC-V"
+
+config CONFIG_ARCH_X86
+    bool
+    prompt "X86"
+endchoice
+
+source "$srctree/arch/arm64/Kconfig"

@@ -1,0 +1,5 @@
+#pragma once
+#define CONFIG_QCOM_SPMI 1
+#define CONFIG_QCOM_KEYS 0
+#define CONFIG_KSHIM_TOUCH 0
+#define CONFIG_KSHIM_FRAMEBUFFER 0

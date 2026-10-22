@@ -1,0 +1,21 @@
+menu "Theme design adaptation"
+    depends on KSHIM_LVGL && !KSHIM_MENU_STYLE_FLAT
+
+config KSHIM_MENU_SCALE_Q8
+    int "Design scale (Q8; 0 = automatic, 256 = 1x)"
+    range 0 512
+    default 0
+    help
+      Scales the non-FLAT layout and font sizes together. This is not a DPI
+      value. Automatic scale is 1x to 2x from the framebuffer short edge.
+      Explicit nonzero values below 96 are clamped to 96. FLAT ignores it.
+
+config KSHIM_MENU_REDUCED_EFFECTS
+    bool "Reduce non-FLAT theme drawing effects"
+    default n
+    help
+      Removes cached Glass/Aurora backgrounds, shadows and glow. Selection,
+      borders, labels and layout remain. FLAT is unchanged. Extra static
+      cached-background storage is excluded when this option is enabled.
+
+endmenu

@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource",
+  "revision": "74347f5521fb444936f5986ff0937264307d78fe",
+  "files": {
+    "drivers/clk/qcom/gcc-sm8150.c": "2182e349b2d51b07d3bd57df51fd37266db8c5926e154640863aaf5079420ef6",
+    "drivers/gpu/drm/msm/sde/sde_formats.c": "cec6b42cf112fc3d97250a03f4bcfc9d8e43804fbffbf8e83982dfb393c95ad3",
+    "drivers/gpu/drm/msm/sde/sde_hw_ctl.c": "1723397ad20d6dbe9e9c5ab0e6def898cf3b9e6a048690bc35a7626466600a70",
+    "drivers/gpu/drm/msm/sde/sde_hw_sspp.c": "228ecfad88473ff8d1bfd83d462523c11b9ad1236b5a07b763eec7b61a2bf649",
+    "drivers/pinctrl/qcom/pinctrl-sm8150.c": "d30aa1541f30ea966b0e261bbc94c131cf399b3fb11592b5f1d6253b9535eb07",
+    "include/dt-bindings/clock/qcom,gcc-sm8150.h": "8e00398ffde32ca700d9819681e05aaad1740feb4463be28da59fe7f4dd6a7e0"
+  }
+}

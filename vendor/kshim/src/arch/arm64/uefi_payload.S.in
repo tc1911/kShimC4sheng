@@ -1,0 +1,8 @@
+.section .uefi_payload, "a"
+.balign 16
+.global kshim_uefi_payload_start
+.global kshim_uefi_payload_end
+kshim_uefi_payload_start:
+.incbin "@KSHIM_UEFI_PAYLOAD@"
+kshim_uefi_payload_end:
+.section .note.GNU-stack, "", %progbits

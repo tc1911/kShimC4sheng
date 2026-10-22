@@ -1,0 +1,298 @@
+mainmenu "kShimC $(VERSION) Configuration"
+
+config KSHIM_BOOT_TIMING
+    bool "Record boot stages in the selected Linux device tree"
+    default n
+
+config KSHIM_QCOM_REBOOT
+    bool "DT-selected Qualcomm recovery, bootloader and EDL targets"
+    depends on QCOM_SPMI
+    default n
+
+config KSHIM_MENU_ADVANCED_ACTIONS
+    bool "Group diagnostic and recovery targets in an advanced menu"
+    depends on KSHIM_QCOM_REBOOT
+    default n
+
+menu "Architecture"
+    source "$srctree/arch/Kconfig"
+endmenu
+
+menu "Drivers"
+    source "$srctree/drivers/Kconfig"
+endmenu
+
+menu "Qualcomm Input"
+    config QCOM_KEYS
+        bool "Enable Qualcomm key input"
+        default y
+        help
+            Enable the debounced Qualcomm PON/GPIO key backend.  Volume Up
+            maps to menu up, Volume Down maps to menu down, and Power maps to
+            menu confirm.
+
+    config QCOM_SPMI
+        bool "Enable polled Qualcomm PMIC Arbiter SPMI reader"
+        default n
+        depends on QCOM_KEYS
+        help
+            Enable CrDK SPMI and PMIC GPIO input using controllers, bus IDs
+            and slave IDs discovered from the runtime device tree.
+
+    config QCOM_KEY_DEBOUNCE_SAMPLES
+        int "Key debounce samples"
+        range 1 32
+        default 2
+endmenu
+
+menu "Touch input"
+    config KSHIM_TOUCH
+        bool "Enable DT-selected ST FTM5 touch input"
+        default n
+endmenu
+
+menu "Multicore"
+    config KSHIM_SMP
+        bool "Enable PSCI workers"
+        default n
+    config KSHIM_SMP_SELFTEST
+        bool "Run QEMU PSCI self-test and exit"
+        depends on KSHIM_SMP
+        select KSHIM_LVGL
+        default n
+    config KSHIM_SMP_WORKERS
+        int "Maximum secondary workers"
+        depends on KSHIM_SMP
+        range 0 7
+        default 3
+endmenu
+
+menu "Framebuffer and UI"
+    config KSHIM_MENU_BASE_ANDROID
+        bool "Describe the original base image as Android"
+        default n
+        help
+            Board profiles with an Android base image may opt into Android
+            wording. This does not change the image selection or boot path.
+
+    config KSHIM_MENU_ENTRY_DETAILS
+        bool "Show entry descriptions and separate navigation hints"
+        default n
+        help
+            Keep the selected entry description in the right pane and show
+            navigation hints in a separate footer on supported split layouts.
+
+    config KSHIM_MENU_CHINESE
+        bool "Use Simplified Chinese menu text"
+        default n
+        help
+            Translate menu controls into Simplified Chinese. Entry names
+            remain supplied by the manifest.
+
+    config KSHIM_MENU_LANGUAGE_SWITCH
+        bool "Runtime Chinese / English menu"
+        default n
+
+    config KSHIM_MENU_SESSION_SETTINGS
+        bool "Session-only device and default-boot settings"
+        default n
+        help
+            Offer device and default-boot settings in the boot menu. Any
+            change made here applies only to the current boot session: the
+            settings are not persistent, are never written to UFS or any
+            other storage, and reset on the next boot.
+
+    config KSHIM_MENU_POWER_ACTIONS
+        bool "Enable firmware restart and power-off menu actions"
+        default n
+        help
+            Add firmware restart and power-off actions to the boot menu.
+            These actions do not require secondary CPU workers.
+
+    config KSHIM_QEMU_PLATFORM
+        bool "Enable QEMU test memory and framebuffer"
+        default y
+        help
+            Permit virtual test windows. Console resources are always read
+            from DT. Disable these test windows for physical boards.
+
+    config KSHIM_FRAMEBUFFER
+        bool "Enable validated continuous splash framebuffer UI"
+        default y
+
+    config KSHIM_FB_RENDER_ADDRESS
+        depends on KSHIM_QEMU_PLATFORM
+        hex "Framebuffer render address"
+        default 0x0
+        help
+            Virtual test surface only. Physical platforms discover the live
+            scanout layout from SDE and its DT reserved-memory region.
+
+    config KSHIM_FB_WIDTH
+        depends on KSHIM_QEMU_PLATFORM
+        int "Framebuffer width"
+        range 64 4096
+        default 128
+
+    config KSHIM_FB_HEIGHT
+        depends on KSHIM_QEMU_PLATFORM
+        int "Framebuffer height"
+        range 48 4096
+        default 64
+
+    config KSHIM_FB_STRIDE
+        depends on KSHIM_QEMU_PLATFORM
+        int "Framebuffer stride in bytes"
+        range 0 2147483647
+        default 0
+        help
+            Zero selects the minimum stride for the selected pixel format.
+
+    config KSHIM_FB_FORMAT
+        depends on KSHIM_QEMU_PLATFORM
+        int "Framebuffer format (1=mono LSB, 2=mono MSB, 3=gray8, 4=RGB565, 5/6=32-bit)"
+        range 1 6
+        default 1
+        help
+            LVGL renders color pixels and converts them to this target format.
+
+    config KSHIM_LVGL
+        bool "Enable LVGL boot menu"
+        default y
+        help
+            Build the pinned LVGL boot menu with a selectable visual style.
+            The default FLAT style retains the animated acrylic panel.
+            Qualcomm Volume Up, Volume Down, and Power map to up, down,
+            and confirm respectively. See docs/menu-styles.md.
+
+    choice KSHIM_MENU_STYLE
+        prompt "Boot menu style"
+        depends on KSHIM_LVGL
+        default KSHIM_MENU_STYLE_FLAT
+        help
+            Select the device boot menu appearance, not host menuconfig colors.
+            Input and boot actions are shared. Only FLAT uses animated textures.
+            Modern styles do not enable LVGL's built-in default theme.
+
+        config KSHIM_MENU_STYLE_FLAT
+            bool "FLAT - original dark acrylic"
+        config KSHIM_MENU_STYLE_CLASSIC
+            bool "CLASSIC - existing framed firmware menu"
+        config KSHIM_MENU_STYLE_CARDS
+            bool "CARDS - existing light rounded cards"
+        config KSHIM_MENU_STYLE_TERMINAL
+            bool "TERMINAL - existing green terminal look"
+        config KSHIM_MENU_STYLE_MINIMAL
+            bool "MINIMAL - existing quiet monochrome"
+        config KSHIM_MENU_STYLE_HIGH_CONTRAST
+            bool "HIGH_CONTRAST - existing black and white"
+
+        source "$srctree/ui/styles/Kconfig"
+    endchoice
+
+    config KSHIM_UI_SCRATCH_BASE
+        hex "UI scratch memory base (fallback)"
+        default 0x0
+        depends on KSHIM_LVGL
+
+    config KSHIM_UI_SCRATCH_SIZE
+        hex "UI scratch memory size (fallback)"
+        default 0x0
+        depends on KSHIM_LVGL
+        help
+            RAM outside the runtime slot for the inflated Noto Sans CJK font
+            (about 840 KiB) and, for FLAT only, two background textures.
+            Qualcomm boards use the display reservation past scanout.
+            Without scratch the menu uses the existing Latin fallback font.
+
+    config KSHIM_MENU_ENTRY_DURATION_MS
+        int "Menu entrance animation duration (milliseconds)"
+        range 0 2000
+        default 360
+        depends on KSHIM_LVGL
+        help
+            Zero presents the complete menu on its first frame. Other values
+            fade and slide the panel into view over the selected duration.
+
+    config KSHIM_UI_ROTATION_CCW
+        int "UI pixel rotation into native scanout (degrees counterclockwise)"
+        range 0 270
+        default 0
+        depends on KSHIM_LVGL
+        help
+            Use 0, 90, 180 or 270. Only the boot menu rotates; the hardware
+            framebuffer dimensions, stride and Linux handoff stay native.
+            At 90 degrees, logical (x,y) maps to native (y,height-1-x).
+
+    config KSHIM_LVGL_BUFFER_BYTES
+        int "LVGL partial render buffer size"
+        range 128 1048576
+        default 16384
+        depends on KSHIM_LVGL
+        help
+            Bytes per partial color render buffer. Must hold one logical UI
+            row after rotation. Board profiles use 256 KiB buffers.
+
+endmenu
+
+menu "Generic"
+    config KSHIM_UEFI_TEST_MENU
+        bool "Two entries that both launch the embedded UEFI FD"
+        default n
+        help
+            Requires KSHIM_UEFI_PAYLOAD in CMake. The two names select the
+            same payload, copied into its board-specific FD reservation.
+
+    config KSHIM_MENU_ENTRY1
+        string "First menu entry"
+        default "Boot"
+    config KSHIM_MENU_ENTRY2
+        string "Second menu entry"
+        default "Recovery"
+    config KSHIM_UEFI_LOAD_ADDRESS
+        hex "UEFI FD destination/entry address"
+        default 0xFFC00000
+        depends on KSHIM_UEFI_TEST_MENU
+    config KSHIM_UEFI_MAX_SIZE
+        hex "UEFI FD reserved size"
+        default 0x400000
+        depends on KSHIM_UEFI_TEST_MENU
+
+    config ENABLE_BANNER
+        bool "Enable Boot Banner"
+        default y
+        help
+            Enable or disable the boot banner.
+            If disabled, no banner will be displayed during boot.
+    config BANNER
+        string "Boot Banner"
+        default "kShimC v$(VERSION) $(HOST_INFO) $(BUILD_TIME) \n"
+        depends on ENABLE_BANNER
+
+    config KSHIM_DEBUG_CONSOLE
+        bool "Initialize the boot-FDT debug console (UART read/write and handoff quiesce)"
+        default y
+        help
+            Controls boot-FDT UART initialization, read/write and handoff
+            quiesce independently of log verbosity.
+
+    choice
+        bool
+        prompt "Debug Level"
+        default DEBUG_LEVEL_VERBOSE
+        config DEBUG_LEVEL_NONE
+            bool "None"
+        config DEBUG_LEVEL_ERROR
+            bool "Error"
+        config DEBUG_LEVEL_WARNING
+            bool "Warning"
+        config DEBUG_LEVEL_INFO
+            bool "Info"
+        config DEBUG_LEVEL_VERBOSE
+            bool "Verbose"
+    endchoice
+
+    config ASSERT_HALT
+        bool "Halt on Assert Failure"
+        default y
+endmenu

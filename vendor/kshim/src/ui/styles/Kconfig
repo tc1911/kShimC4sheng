@@ -1,0 +1,113 @@
+# 现代视觉预设，全部属于外层 KSHIM_MENU_STYLE choice。
+config KSHIM_MENU_STYLE_FLUENT
+    bool "FLUENT - Fluent 2 inspired light surfaces"
+    help
+        Neutral layered surfaces, fine accent rail and compact rounded controls.
+        Software-rendered approximation; does not call Windows Mica APIs.
+config KSHIM_MENU_STYLE_MATERIAL3
+    bool "MATERIAL3 - tonal containers and pill action"
+    help
+        Material 3 inspired light roles, tonal selection, generous corner
+        radii and a filled pill Boot button. Separate from Material 2; not a native LVGL theme.
+config KSHIM_MENU_STYLE_SURFACE
+    bool "SURFACE - Microsoft Surface UEFI inspired menu"
+    help
+        Wide landscape screens separate boot navigation and selected-image
+        information. Narrow screens retain a single column. No fake UEFI
+        settings, Microsoft branding assets or changed boot semantics.
+config KSHIM_MENU_STYLE_CUPERTINO
+    bool "CUPERTINO - grouped light list"
+    help
+        Rounded outer group, fine row separators and a blue primary action.
+config KSHIM_MENU_STYLE_GLASS
+    bool "GLASS - translucent blue glass-like panel"
+    help
+        Translucency, gradient and a fine rim over a static gradient background.
+        This is glass-like composition, not live backdrop blur.
+config KSHIM_MENU_STYLE_AURORA
+    bool "AURORA - teal and violet gradients"
+    help
+        Dark layered surfaces, tonal gradient selection and a mint pill action.
+config KSHIM_MENU_STYLE_SOFT_UI
+    bool "SOFT_UI - soft raised surfaces"
+    help
+        Light rims, small bounded shadows and a depressed pressed state.
+        A visible focus outline remains independent of the shadows.
+config KSHIM_MENU_STYLE_BENTO
+    bool "BENTO - adaptive numbered cards"
+    help
+        Two columns on sufficiently wide panels, one column on narrow panels.
+        Numbered cards retain row-major physical-key navigation and Boot-only
+        touch confirmation.
+config KSHIM_MENU_STYLE_NEON
+    bool "NEON - restrained cyan focus glow"
+    help
+        Dark surfaces with a bounded focus glow and cyan primary action.
+        No scanlines, retro styling or continuous decorative animation.
+config KSHIM_MENU_STYLE_NORD
+    bool "NORD - calm slate surfaces"
+    help
+        Cool slate surfaces, clear cyan focus rail and restrained motion.
+
+config KSHIM_MENU_STYLE_MATERIAL2
+    bool "MATERIAL2 - Material 2 light elevated cards"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_MATERIAL2_DARK
+    bool "MATERIAL2_DARK - Material 2 dark elevated surfaces"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_FLUENT2
+    bool "FLUENT2 - Fluent 2 light with inset focus pill"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_FLUENT2_DARK
+    bool "FLUENT2_DARK - Fluent 2 dark with inset focus pill"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_FLUENT_DARK
+    bool "FLUENT_DARK - Original Fluent in dark colors"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_SURFACE_DARK
+    bool "SURFACE_DARK - Surface-inspired dark adaptive navigation"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_STAR_CHART
+    bool "Star chart (hand-drawn dark)"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_HARMONYOS
+    bool "HARMONYOS - HarmonyOS-inspired responsive rounded cards"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_CLOVER
+    bool "CLOVER - Clover EFI-inspired horizontal boot picker"
+    help
+        Custom LVGL appearance; retains the shared keyboard, touch and Boot
+        confirmation logic. No native toolkit or external theme loading.
+
+config KSHIM_MENU_STYLE_IOS_HIG
+    bool "IOS_HIG - iOS-inspired inset selection list"
+    help
+        Large title, inset rounded group, trailing checkmark and a separate
+        primary Boot action. Uses the existing CJK font, not UIKit, SF Symbols,
+        Liquid Glass or Apple branding. Selection alone does not boot.
+
+source "$srctree/ui/styles/new_themes.Kconfig"

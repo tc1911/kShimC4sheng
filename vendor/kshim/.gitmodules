@@ -1,0 +1,9 @@
+[submodule "lib/picolibc"]
+	path = lib/picolibc
+	url = https://github.com/picolibc/picolibc
+[submodule "third_party/lvgl"]
+	path = third_party/lvgl
+	url = https://github.com/lvgl/lvgl.git
+[submodule "lib/CrDK"]
+	path = lib/CrDK
+	url = https://github.com/Project-Aloha/CrDK
