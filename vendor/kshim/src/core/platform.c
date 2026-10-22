@@ -1785,6 +1785,24 @@ static int platform_select(uint64_t fdt, const char *const *names,
                            size_t initial, uint32_t timeout_ms, uint64_t advanced_mask,
                            int advanced, int language, int settings, size_t *selected)
 {
+#if CONFIG_KSHIM_DIAG_PAINT
+    {
+        const struct kshim_resources *diag_res = kshim_resources_get();
+        if (!diag_res || diag_res->splash_status) {
+            /* Splash decode failed: stop here so the absence of Android is
+             * an unambiguous signal on a black panel. */
+            for (;;) __asm__ volatile("wfi");
+        }
+        kshim_framebuffer_t diag_fb;
+        if (kshim_fb_init(&diag_fb, &diag_res->framebuffer) == KSHIM_FB_OK) {
+            uint32_t red = diag_fb.bpp == 16 ? 0xf800u : 0x00ff0000u;
+            (void)kshim_fb_set_colors(&diag_fb, red, red);
+            (void)kshim_fb_clear(&diag_fb);
+            uint64_t until = get_current_time() + 5000;
+            while (get_current_time() < until) __asm__ volatile("");
+        }
+    }
+#endif
     if (!selected) return -1;
     struct menu_selection menu = {.fdt = (const void *)(uintptr_t)fdt,
                                   .timeout = timeout_ms, .info = info};

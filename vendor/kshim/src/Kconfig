@@ -14,6 +14,15 @@ config KSHIM_DIAG_MARKER
       to the stock kernel.  Android then exposes it through
       /proc/device-tree/chosen/kshim,diag.
 
+config KSHIM_DIAG_PAINT
+    bool "Paint the detected scanout buffer to verify splash handoff"
+    default n
+    help
+      Diagnostic only: if the splash decoder refuses the SDE tree, stop
+      before the menu; otherwise fill the detected scanout buffer with a
+      solid colour for five seconds, then continue.  A red screen proves
+      that the framebuffer address/stride/format are correct.
+
 config KSHIM_QCOM_REBOOT
     bool "DT-selected Qualcomm recovery, bootloader and EDL targets"
     depends on QCOM_SPMI
