@@ -149,10 +149,12 @@ menu "Framebuffer and UI"
         depends on KSHIM_QCOM_REBOOT
         default n
         help
-            Store a small checksummed, double-buffered record in the PMIC
-            SDAM scratch area and preselect the last successfully chosen menu
+            Store a small checksummed record in the PMIC SDAM scratch area
+            (0x8400/0x8500) and preselect the last successfully chosen menu
             entry on the next boot. The menu still appears and keeps its
-            timeout; no UFS partition or filesystem is needed.
+            timeout; no UFS partition or filesystem is needed. If the PMIC
+            clears the scratch area, the menu falls back to the manifest
+            default (Android).
 
     config KSHIM_MENU_POWER_ACTIONS
         bool "Enable firmware restart and power-off menu actions"

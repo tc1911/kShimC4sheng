@@ -48,6 +48,13 @@ int kshim_qcom_nv_read(const void *hardware_fdt, uint32_t offset,
                        void *buffer, uint32_t length);
 int kshim_qcom_nv_write(const void *hardware_fdt, uint32_t offset,
                         const void *buffer, uint32_t length);
+/* Generic access to a named qcom,spmi-sdam instance (e.g. nvram@8400). */
+int kshim_qcom_nv_config(const void *hardware_fdt, uint16_t sdam_base,
+                         struct kshim_qcom_reboot_config *config);
+int kshim_qcom_nv_read_cfg(const struct kshim_qcom_reboot_config *config,
+                           uint16_t offset, void *buffer, uint32_t length);
+int kshim_qcom_nv_write_cfg(const struct kshim_qcom_reboot_config *config,
+                            uint16_t offset, const void *buffer, uint32_t length);
 int kshim_qcom_reboot_spmi_read(const struct kshim_qcom_reboot_config *config,
                               uint8_t *value);
 int kshim_qcom_reboot_spmi_write(const struct kshim_qcom_reboot_config *config,

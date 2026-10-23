@@ -1,15 +1,15 @@
 {
-  "source": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/e8b5b48b79f19f29aa68b0a178eab3472ea9f7e8/fonts/TTF/LXGWWenKai-Regular.ttf",
-  "source_sha256": "39ad71264b588165b469e35e6afb162a378dacd1f95348160240ba9038ac3009",
+  "source": "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+  "source_sha256": "8d6ba638ac9553413354cfaab97637c1cd778444e259441ea1e5f8fb2c697fba",
   "license": "SIL Open Font License 1.1 (lxgw_wenkai_menu-OFL.txt)",
-  "coverage": "menu preset: ASCII, Latin-1, Latin Extended-A, general punctuation, CJK punctuation, full-width Latin/punctuation, plus the characters of /task/inputs/menu-required-text.txt",
+  "coverage": "menu preset: ASCII, Latin-1, Latin Extended-A, general punctuation, CJK punctuation, full-width Latin/punctuation, plus the characters of /tmp/opencode/menu-required.txt",
   "coverage_mode": "menu",
-  "glyphs": 716,
-  "raw_bytes": 146116,
-  "compressed_bytes": 96877,
-  "blob_sha256": "c76da0918f669f5eff88df5aac56b5030849c7beb7088881048bc7af8cf5cc4c",
+  "glyphs": 708,
+  "raw_bytes": 146180,
+  "compressed_bytes": 97056,
+  "blob_sha256": "965a0643a677276ae6b5de43e09b6c1389119a7dc4190a090f491669d2e8832e",
   "generator": "tools/gen_ui_font.py",
-  "requested_codepoints": 765,
+  "requested_codepoints": 769,
   "missing_codepoints": [
     "0x00AD",
     "0x200C",
@@ -73,5 +73,5 @@
     "0x3032",
     "0xFF00"
   ],
-  "required_characters": 271
+  "required_characters": 694
 }

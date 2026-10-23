@@ -1,98 +1,133 @@
 /* SPDX-License-Identifier: MIT
- * Last-boot record in the PMIC SDAM scratch area. The reboot driver already
- * owns the SCM IO accessors; this layer only defines a small checksummed,
- * double-buffered record.
+ * Last-boot selection in a PMIC SDAM scratch slot.
+ *
+ * On sheng, SDAM 0x8400/0x8500 keep their contents across a reboot while
+ * 0x7100 is cleared by ABL. The record lives at 0x50 with a backup at 0x60;
+ * both are battery-backed and are not written by ABL or either OS.
  */
 #if !defined(KSHIM_HOST_TEST)
 #include <config.h>
 #endif
 #include <qcom_nv.h>
 #include <qcom_reboot.h>
+#include <stdio.h>
 #include <string.h>
 
 #if defined(CONFIG_KSHIM_BOOT_LAST) && CONFIG_KSHIM_BOOT_LAST
 
-#define KSHIM_NV_OFFSET 0xE0U
-#define KSHIM_NV_SLOT_SIZE 16U
-#define KSHIM_NV_MAGIC UINT32_C(0x5445534B) /* "KSET" in little-endian bytes */
-#define KSHIM_NV_VERSION 1U
+#define NV_OFFSET       0x50U
+#define NV_BACKUP       0x60U
+#define NV_SLOT_SIZE    16U
+#define NV_MAGIC        0x5445534BU  /* "KSET" */
+#define NV_VERSION      1U
 
-struct nv_slot {
+struct nv_record {
     uint32_t magic;
-    uint8_t version;
-    uint8_t index;
+    uint8_t  version;
+    uint8_t  index;
     uint16_t flags;
     uint32_t fingerprint;
     uint32_t crc;
-} __attribute__((packed));
+};
 
-static uint32_t nv_crc32(const uint8_t *data, uint32_t length)
+static int NvLastStatus = -1;
+static int NvSlot = -1;
+static uint8_t NvLastIndex;
+
+static uint32_t nv_crc32(const uint8_t *data, size_t len)
 {
-    uint32_t crc = UINT32_C(0xffffffff);
-    for (uint32_t i = 0; i < length; ++i) {
+    uint32_t crc = 0xFFFFFFFFU;
+    for (size_t i = 0; i < len; ++i) {
         crc ^= data[i];
-        for (int bit = 0; bit < 8; ++bit)
-            crc = (crc >> 1) ^ (UINT32_C(0xedb88320) & (0U - (crc & 1U)));
+        for (int b = 0; b < 8; ++b)
+            crc = (crc >> 1) ^ (0xEDB88320U & (uint32_t)-(int32_t)(crc & 1U));
     }
     return ~crc;
 }
 
-static int slot_valid(const struct nv_slot *slot)
+static int nv_read_at(const void *fdt, uint16_t base, uint16_t off,
+                      struct nv_record *rec)
 {
-    if (slot->magic != KSHIM_NV_MAGIC || slot->version != KSHIM_NV_VERSION)
-        return 0;
-    return nv_crc32((const uint8_t *)slot, 12) == slot->crc;
+    struct kshim_qcom_reboot_config cfg;
+    if (kshim_qcom_nv_config(fdt, base, &cfg)) return -1;
+    if (kshim_qcom_nv_read_cfg(&cfg, off, rec, sizeof(*rec))) return -1;
+    if (rec->magic != NV_MAGIC || rec->version != NV_VERSION) return -1;
+    if (rec->crc != nv_crc32((const uint8_t *)rec, 12)) return -1;
+    return 0;
+}
+
+static int nv_write_at(const void *fdt, uint16_t base, uint16_t off,
+                       struct nv_record *rec)
+{
+    struct kshim_qcom_reboot_config cfg;
+    struct nv_record check;
+    rec->magic = NV_MAGIC;
+    rec->version = NV_VERSION;
+    rec->flags = 0;
+    rec->crc = nv_crc32((const uint8_t *)rec, 12);
+    if (kshim_qcom_nv_config(fdt, base, &cfg)) return -1;
+    if (kshim_qcom_nv_write_cfg(&cfg, off, rec, sizeof(*rec))) return -1;
+    if (kshim_qcom_nv_read_cfg(&cfg, off, &check, sizeof(check))) return -1;
+    return memcmp(rec, &check, sizeof(check)) == 0 ? 0 : -1;
+}
+
+int kshim_nv_last_status(uint8_t *index, int *slot)
+{
+    if (index) *index = NvLastIndex;
+    if (slot) *slot = NvSlot;
+    return NvLastStatus;
 }
 
 int kshim_nv_load(const void *fdt, struct kshim_nv_selection *out)
 {
-    uint8_t raw[KSHIM_NV_SLOT_SIZE * 2];
-    if (!out || kshim_qcom_nv_read(fdt, KSHIM_NV_OFFSET, raw, sizeof(raw)))
-        return -1;
-    /* Prefer the second slot: it is written last, so it is the newest. */
-    for (int i = 1; i >= 0; --i) {
-        struct nv_slot slot;
-        memcpy(&slot, raw + (uint32_t)i * KSHIM_NV_SLOT_SIZE, sizeof(slot));
-        if (slot_valid(&slot)) {
-            out->fingerprint = slot.fingerprint;
-            out->index = slot.index;
+    static const uint16_t bases[] = {0x8400U, 0x8500U};
+    struct nv_record rec;
+
+    NvLastStatus = -1;
+    NvLastIndex = 0;
+    NvSlot = -1;
+    if (!out) return -1;
+    for (size_t i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i) {
+        if (nv_read_at(fdt, bases[i], NV_OFFSET, &rec) == 0 ||
+            nv_read_at(fdt, bases[i], NV_BACKUP, &rec) == 0) {
+            out->index = rec.index;
+            out->fingerprint = rec.fingerprint;
+            NvLastStatus = 0;
+            NvLastIndex = rec.index;
+            NvSlot = (int)bases[i] + NV_OFFSET;
             return 0;
         }
     }
+    NvLastStatus = -2;
     return -1;
 }
 
 int kshim_nv_store(const void *fdt, uint8_t index, uint32_t fingerprint)
 {
-    struct nv_slot slot = {
-        .magic = KSHIM_NV_MAGIC,
-        .version = KSHIM_NV_VERSION,
-        .index = index,
-        .flags = 0,
-        .fingerprint = fingerprint,
-        .crc = 0,
-    };
-    slot.crc = nv_crc32((const uint8_t *)&slot, 12);
-    uint8_t probe[KSHIM_NV_SLOT_SIZE * 2];
-    /* Probe with a read first: if SCM cannot reach this SDAM range, do not
-     * attempt a write at all. */
-    if (kshim_qcom_nv_read(fdt, KSHIM_NV_OFFSET, probe, sizeof(probe)))
-        return -1;
-    uint8_t raw[KSHIM_NV_SLOT_SIZE * 2];
-    memcpy(raw, &slot, sizeof(slot));
-    memcpy(raw + KSHIM_NV_SLOT_SIZE, &slot, sizeof(slot));
-    if (kshim_qcom_nv_write(fdt, KSHIM_NV_OFFSET, raw, sizeof(raw)))
-        return -1;
-    /* Verify the newest slot survived the SCM transaction. */
-    struct nv_slot check;
-    if (kshim_qcom_nv_read(fdt, KSHIM_NV_OFFSET + KSHIM_NV_SLOT_SIZE,
-                           &check, sizeof(check)) ||
-        memcmp(&check, &slot, sizeof(slot)))
-        return -1;
-    return 0;
+    static const uint16_t bases[] = {0x8400U, 0x8500U};
+    struct nv_record rec = {0};
+
+    rec.index = index;
+    rec.fingerprint = fingerprint;
+    for (size_t i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i) {
+        if (nv_write_at(fdt, bases[i], NV_OFFSET, &rec) == 0 ||
+            nv_write_at(fdt, bases[i], NV_BACKUP, &rec) == 0) {
+            if (NvSlot < 0) NvSlot = (int)bases[i] + NV_OFFSET;
+            NvLastStatus = 0;
+            NvLastIndex = index;
+        }
+    }
+    return NvLastStatus == 0 ? 0 : -1;
 }
 
 #else
+
+int kshim_nv_last_status(uint8_t *index, int *slot)
+{
+    if (index) *index = 0;
+    if (slot) *slot = -1;
+    return -1;
+}
 
 int kshim_nv_load(const void *fdt, struct kshim_nv_selection *out)
 {

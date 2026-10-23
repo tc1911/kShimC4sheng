@@ -13,13 +13,14 @@
 菜单默认 8 秒后进 Android，音量键选择、电源键确认（sheng 的触屏驱动未适配，
 与两代 Y700 一样只用按键）。
 
-> 状态：**真机双系统已跑通（2026-10-23，sheng / A 槽）**。
+> 状态：**真机双系统已跑通（2026-10-24，sheng / A 槽，kShimC 0.0.2）**。
 > Android 原厂与 Debian forky/KDE 都能从菜单正常引导。
-> 当前 `boot_a` = `out/boot_a_debian.img`，89,997,312 B，sha256
-> `7a20e585ecaccd8f03c1adb9f75ade44c3c030c57470ac37961cbba53287b449`。
+> 当前 `boot_a` = `out/boot_a_booting.img`，90,005,504 B，sha256
+> `79bc3e156af88c9eb734302e99f5ab0031acfe0d5af1a2efe2447c2f575031d3`。
 > `linux` 分区 128 GiB（`PARTLABEL=linux`），`userdata` 104.4 GiB。
-> 菜单 7 项、音量键/电源键、Android 原厂启动、高级启动里的
-> Recovery/Fastboot、设备信息、设备选择均正常。
+> 菜单 7 项、音量键/电源键，会记住上次启动的系统（PMIC SDAM）；
+> 选中后底部显示“正在启动，请稍候”。设备信息页显示上次启动记录，
+> 设置页只保留语言切换，高级启动顺序为 Fastboot → Recovery → EDL。
 > 备份（原厂 boot/GPT/全部分区）在 `/home/tc191/6spBackup/rom/`；
 > 原厂 `boot_a` 回滚：`fastboot flash boot_a stock/boot_a-stock.img`。
 > 详细步骤见 `docs/sheng-debian-dual-boot.md`。
@@ -36,7 +37,13 @@
   CrDK 支持的 5/7/8/8.5。Recovery/Fastboot 已验证，EDL 未试。
 - 设备信息：ABL DT 根是 `qcom,kalama*` 而非 `qcom,sm8550`，已兼容；
   内存 7888 MiB（`/memory` 里有一个 size=0 的占位 bank，已跳过）。
-- 设备选择页新增 `Xiaomi Pad 6S Pro (sheng / SM8550)`。
+- 设备选择页新增 `Xiaomi Pad 6S Pro (sheng / SM8550)`（0.0.2 起设备固定为
+  sheng，设置页不再显示设备选择）。
+- 上次启动：`CONFIG_KSHIM_BOOT_LAST` 把选中条目写进 PMIC SDAM
+  `0x8400/0x8500` 的 `0x50/0x60`（`KSET` 记录 + CRC32，双份回退）。没有记录或
+  记录失效时回退 manifest 默认（Android），不会阻止手动选择。
+- 启动提示：确认条目后先渲染“正在启动，请稍候”再交接内核，避免停在菜单
+  画面让人误以为卡死。
 
 ## 为什么放在 boot_a
 
@@ -161,7 +168,7 @@ DTB + initrd，更适合用这种方式先验证菜单和 Linux 启动。
 没有 `aarch64-linux-gnu-gcc` 时，runtime 也可以在任意装了该交叉编译器的
 容器/发行版里构建，只要把产物放到 `out/runtime.bin`。打包阶段只需要
 `out/runtime.bin`，不需要重新编译 runtime。本次构建产物：
-4,194,304 B，sha256 `d8e1becbb584d96d1fdf231e33bbf70dd779905c887ce2ea226054877bc7bd73`。
+4,194,304 B，sha256 `a24ac1ef81c11abbaa2e640b3dc0b1f8928f508fe1dfa035d9761773ceaacbb4`。
 
 ## 迁移步骤（从现有双系统）
 
@@ -180,6 +187,9 @@ DTB + initrd，更适合用这种方式先验证菜单和 Linux 启动。
   上可能不同，Android 条目最终以刷入后的行为为准。
 - 触屏不可用（与两代 Y700 一致），只能音量/电源键。
 - Android OTA 覆盖 `boot_a` 后菜单消失。
+- “上次启动”记录是 best-effort：PMIC/固件可能在断电、深放电或某些复位路径
+  清掉 SDAM 的 `0x8400/0x8500`。记录失效只会回到 Android 默认，不会影响
+  手动选择；不依赖 RTC，也不会改动系统时钟。
 - 解锁 bootloader 是前提；sheng 的 EDL 恢复需要小米 service account。
 - 本项目不修改 `super`、`userdata`、`linux` 分区，只写 `boot_a`。
 

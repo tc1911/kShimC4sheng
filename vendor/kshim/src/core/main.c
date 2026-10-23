@@ -248,24 +248,6 @@ static void print_entry_name(const MANIFEST_ENTRY *entry)
     }
 }
 
-#if defined(CONFIG_KSHIM_BOOT_LAST) && CONFIG_KSHIM_BOOT_LAST
-static uint32_t selection_fingerprint(const MANIFEST_VIEW *view,
-                                      const uint32_t *indexes,
-                                      const char *const *names, size_t count)
-{
-    uint32_t hash = UINT32_C(2166136261);
-    for (size_t i = 0; i < count; ++i) {
-        const MANIFEST_ENTRY *entry = view->entries[indexes[i]];
-        hash = (hash ^ (uint32_t)entry->size) * UINT32_C(16777619);
-        hash = (hash ^ (uint32_t)entry->flags) * UINT32_C(16777619);
-        for (const char *p = names[i]; *p; ++p)
-            hash = (hash ^ (uint8_t)*p) * UINT32_C(16777619);
-        hash = (hash ^ UINT32_C(0xff)) * UINT32_C(16777619);
-    }
-    return hash;
-}
-#endif
-
 static uint32_t select_image(const MANIFEST_VIEW *view, uint64_t fdt, uint64_t linux_base,
                              const struct device_info *info)
 {
@@ -330,10 +312,9 @@ static uint32_t select_image(const MANIFEST_VIEW *view, uint64_t fdt, uint64_t l
         ++count;
     }
 #if defined(CONFIG_KSHIM_BOOT_LAST) && CONFIG_KSHIM_BOOT_LAST
-    uint32_t fingerprint = selection_fingerprint(view, indexes, names, count);
     struct kshim_nv_selection nv;
     if (kshim_nv_load((const void *)(uintptr_t)fdt, &nv) == 0 &&
-        nv.fingerprint == fingerprint && nv.index < count)
+        nv.index < count)
         initial = nv.index;
 #endif
 #if defined(CONFIG_KSHIM_MENU_SESSION_SETTINGS) && CONFIG_KSHIM_MENU_SESSION_SETTINGS
@@ -348,8 +329,7 @@ static uint32_t select_image(const MANIFEST_VIEW *view, uint64_t fdt, uint64_t l
         for (;;) (void)delay(100000);
     }
 #if defined(CONFIG_KSHIM_BOOT_LAST) && CONFIG_KSHIM_BOOT_LAST
-    (void)kshim_nv_store((const void *)(uintptr_t)fdt, (uint8_t)selected,
-                         fingerprint);
+    (void)kshim_nv_store((const void *)(uintptr_t)fdt, (uint8_t)selected, 0);
 #endif
     return indexes[selected];
 }

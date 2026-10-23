@@ -51,7 +51,7 @@ endif()
 
 # Output file name
 set(OUTPUT_NAME kShimC)
-set(KSHIMC_VERSION "0.0.1")
+set(KSHIMC_VERSION "0.0.2")
 project(${OUTPUT_NAME} C ASM)
 
 option(KSHIM_STANDALONE "Boot directly as an ARM64 Image instead of an attached manifest runtime" OFF)
@@ -244,7 +244,7 @@ add_custom_command(
 
 add_custom_target(preprocess_linker_script ALL DEPENDS ${PROCESSED_LINKER_SCRIPT})
 add_executable(${OUTPUT_NAME}.elf ${SRC_FILES})
-# Expose the build version to C as a quoted string literal (e.g. "0.0.1"), not
+# Expose the build version to C as a quoted string literal (e.g. "0.0.2"), not
 # a bare preprocessing token. VERSION is only an environment variable fed into
 # Kconfig, so it never reaches the C compiler as a definition on its own.
 target_compile_definitions(${OUTPUT_NAME}.elf PRIVATE KSHIM_BUILD_VERSION="${KSHIMC_VERSION}")

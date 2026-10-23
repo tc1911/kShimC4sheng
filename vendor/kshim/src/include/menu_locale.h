@@ -225,6 +225,10 @@ typedef enum kshim_menu_text_id {
      * KSHIM_MENU_DESC_BACK ("back to the system boot options") stays with the
      * old page set. */
     KSHIM_TEXT_DESC_BACK_PARENT,
+    /* Read-only "last boot record" row in the settings page. */
+    KSHIM_TEXT_NV_DESC,
+    /* Shown after a boot target is chosen, while the payload is handed off. */
+    KSHIM_TEXT_BOOTING,
 
     KSHIM_TEXT_COUNT
 } kshim_menu_text_id;

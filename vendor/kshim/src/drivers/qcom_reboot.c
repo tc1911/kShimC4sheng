@@ -387,6 +387,77 @@ int kshim_qcom_nv_write(const void *fdt, uint32_t offset, const void *buffer,
 }
 
 
+int kshim_qcom_nv_config(const void *fdt, uint16_t sdam_base,
+                         struct kshim_qcom_reboot_config *config)
+{
+    struct kshim_qcom_reboot_config parsed;
+    int node = -1;
+
+    if (!fdt || !config || !sdam_base) return KSHIM_QCOM_REBOOT_INVALID_DT;
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.fdt = fdt;
+    while ((node = fdt_node_offset_by_compatible(fdt, node, "qcom,spmi-sdam")) >= 0) {
+        int length = 0;
+        const fdt32_t *p = fdt_getprop(fdt, node, "reg", &length);
+        uint32_t base, size;
+        if (!p || length < 4) continue;
+        base = fdt32_to_cpu(p[0]);
+        size = length >= 8 ? fdt32_to_cpu(p[1]) : 0x100U;
+        if (base != sdam_base) continue;
+        if (!size) size = 0x100U;
+        if (base > UINT16_MAX - 255U || size > UINT16_MAX - base) continue;
+        if (kshim_dt_spmi_identity(fdt, node, &parsed.controller,
+                                   &parsed.bus, &parsed.sid))
+            continue;
+        parsed.sdam_base = (uint16_t)base;
+        parsed.sdam_size = (uint16_t)size;
+        parsed.reason_address = (uint16_t)(base + 0xE0U);
+        *config = parsed;
+        return 0;
+    }
+    return KSHIM_QCOM_REBOOT_INVALID_DT;
+}
+
+static int nv_access_cfg(const struct kshim_qcom_reboot_config *c, uint16_t offset,
+                         void *buffer, uint32_t length, int write)
+{
+    if (!c || !buffer || !length || (length > 1U && (offset & 3U)) || offset < 0x40U ||
+        !c->sdam_size || offset > c->sdam_size || length > c->sdam_size - offset)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (kshim_qcom_reboot_spmi_prepare(c))
+        return KSHIM_QCOM_REBOOT_IO_FAILED;
+    reboot_spmi.nv_access = 1;
+    reboot_spmi.fault = 0;
+    reboot_spmi.writing = write ? 1 : 0;
+    int result = 0;
+    for (uint32_t i = 0; i < length; i += 4) {
+        uint32_t n = length - i > 4 ? 4 : length - i;
+        CR_STATUS status = write
+            ? SpmiWrite(&reboot_spmi.controller, c->sid,
+                        (UINT16)(c->sdam_base + offset + i),
+                        (const UINT8 *)buffer + i, n)
+            : SpmiRead(&reboot_spmi.controller, c->sid,
+                       (UINT16)(c->sdam_base + offset + i),
+                       (UINT8 *)buffer + i, n);
+        if (CR_ERROR(status) || reboot_spmi.fault) { result = -1; break; }
+    }
+    reboot_spmi.writing = 0;
+    reboot_spmi.nv_access = 0;
+    return result ? KSHIM_QCOM_REBOOT_IO_FAILED : 0;
+}
+
+int kshim_qcom_nv_read_cfg(const struct kshim_qcom_reboot_config *c,
+                           uint16_t offset, void *buffer, uint32_t length)
+{
+    return nv_access_cfg(c, offset, buffer, length, 0);
+}
+
+int kshim_qcom_nv_write_cfg(const struct kshim_qcom_reboot_config *c,
+                            uint16_t offset, const void *buffer, uint32_t length)
+{
+    return nv_access_cfg(c, offset, (void *)buffer, length, 1);
+}
+
 int kshim_qcom_reboot_request(const void *fdt, enum kshim_qcom_reboot_target target)
 {
     struct kshim_qcom_reboot_config c;

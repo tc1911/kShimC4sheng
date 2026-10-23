@@ -68,7 +68,7 @@
 #define KSHIM_MENU_DESC_BACK "返回系统启动选项。"
 #define KSHIM_MENU_DESC_BACK_PARENT "返回上一级。"
 #define KSHIM_MENU_TEXT_STATUS "选择要启动的系统"
-#define KSHIM_MENU_TEXT_CREDIT "适配维护：B站「单翼」｜免费使用，谨防收费诈骗。"
+#define KSHIM_MENU_TEXT_CREDIT "原作者：B站 单翼，适配维护：tc191｜免费使用，谨防收费诈骗。"
 #define KSHIM_MENU_TEXT_LANGUAGE_STATE "简体中文"
 #else
 #define KSHIM_MENU_TEXT_TITLE(Fallback) (Fallback)
@@ -96,7 +96,7 @@
 #define KSHIM_MENU_DESC_BACK "Return to the system boot options."
 #define KSHIM_MENU_DESC_BACK_PARENT "Return to the previous menu."
 #define KSHIM_MENU_TEXT_STATUS "选择要启动的系统"
-#define KSHIM_MENU_TEXT_CREDIT "Adapted by Danyi on Bilibili · Free to use. Beware of paid scams."
+#define KSHIM_MENU_TEXT_CREDIT "Original author: Danyi on Bilibili · Maintained by tc191 · Free to use. Beware of paid scams."
 #define KSHIM_MENU_TEXT_LANGUAGE_STATE "English"
 #endif
 

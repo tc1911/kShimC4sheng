@@ -26,6 +26,7 @@
 #if CONFIG_KSHIM_MENU_ADVANCED_ACTIONS
 #include <qcom_reboot.h>
 #endif
+#include <qcom_nv.h>
 
 /* With the runtime language switch on, every user-visible string resolves
  * through the locale table so the live selection flips platform text too; the
@@ -34,6 +35,7 @@
 #define KSHIM_STR_KEYS_HINT      kshim_menu_text(KSHIM_TEXT_KEYS_HINT)
 #define KSHIM_STR_KEYS_UNAVAIL   kshim_menu_text(KSHIM_TEXT_KEYS_UNAVAILABLE)
 #define KSHIM_STR_AUTO_CANCELLED kshim_menu_text(KSHIM_TEXT_AUTO_CANCELLED)
+#define KSHIM_STR_BOOTING        kshim_menu_text(KSHIM_TEXT_BOOTING)
 #define KSHIM_STR_POWER_FAILED   kshim_menu_text(KSHIM_TEXT_POWER_FAILED)
 #define KSHIM_STR_RESTART        kshim_menu_text(KSHIM_TEXT_RESTART)
 #define KSHIM_STR_POWER_OFF      kshim_menu_text(KSHIM_TEXT_POWER_OFF)
@@ -53,6 +55,7 @@
 #define KSHIM_STR_KEYS_HINT      "音量键选择，电源键启动"
 #define KSHIM_STR_KEYS_UNAVAIL   "音量键暂不可用"
 #define KSHIM_STR_AUTO_CANCELLED "已取消自动启动，请手动选择"
+#define KSHIM_STR_BOOTING        "正在启动，请稍候"
 #define KSHIM_STR_POWER_FAILED   "电源操作失败"
 #define KSHIM_STR_RESTART        "重启"
 #define KSHIM_STR_POWER_OFF      "关机"
@@ -72,6 +75,7 @@
 #define KSHIM_STR_KEYS_HINT      "Use vol keys, power to boot"
 #define KSHIM_STR_KEYS_UNAVAIL   "Volume keys unavailable"
 #define KSHIM_STR_AUTO_CANCELLED "Auto boot cancelled; choose an entry"
+#define KSHIM_STR_BOOTING        "Starting, please wait..."
 #define KSHIM_STR_POWER_FAILED   "Power action failed"
 #define KSHIM_STR_RESTART        "Restart"
 #define KSHIM_STR_POWER_OFF      "Power off"
@@ -660,6 +664,7 @@ struct menu_selection {
     /* Row names that carry the current value and must outlive the fill. */
     char setting_device_name[KSHIM_INFO_VALUE_LEN];
     char setting_default_name[KSHIM_INFO_VALUE_LEN];
+    char setting_nv_name[KSHIM_INFO_VALUE_LEN];
 };
 static int menu_append(struct menu_page *page, const char *name, const char *description,
                        enum menu_action action, size_t payload, kshim_menu_role_t role)
@@ -893,6 +898,25 @@ static int menu_fill_device_info(struct menu_selection *menu)
                 return -1;
             used += (size_t)written;
         }
+#if defined(CONFIG_KSHIM_BOOT_LAST) && CONFIG_KSHIM_BOOT_LAST
+        {
+            uint8_t nv_index = 0;
+            int nv_slot = -1;
+            int nv_status = kshim_nv_last_status(&nv_index, &nv_slot);
+            int written;
+            if (nv_status == 0)
+                written = snprintf(menu->info_summary + used,
+                                   sizeof(menu->info_summary) - used,
+                                   "\n上次启动: %s @%04X",
+                                   nv_index ? "Linux" : "Android", nv_slot);
+            else
+                written = snprintf(menu->info_summary + used,
+                                   sizeof(menu->info_summary) - used,
+                                   "\n上次启动: --");
+            if (written < 0 || (size_t)written >= sizeof(menu->info_summary) - used)
+                return -1;
+        }
+#endif
     }
 
     /* The home row precedes the power rows and remembers its focus index. */
@@ -1128,37 +1152,6 @@ static int settings_append_system(struct menu_selection *menu, kshim_menu_role_t
     }
     return 0;
 }
-/* Fill the Settings "device" row name with the current value. */
-static void settings_fill_device_name(const struct menu_selection *menu,
-                                      char *buffer, size_t capacity)
-{
-    if (menu->boot.device_choice == BOOT_DEVICE_AUTO) {
-        snprintf(buffer, capacity, kshim_menu_text(KSHIM_TEXT_SETTINGS_DEVICE_AUTO_FMT),
-                 settings_board_name(menu->effective));
-    } else {
-        /* One full model name only; the format carries no second value. */
-        snprintf(buffer, capacity, kshim_menu_text(KSHIM_TEXT_SETTINGS_DEVICE_MANUAL_FMT),
-                 settings_board_code(menu->effective));
-    }
-}
-/* Fill the Settings "default system" row name with the current value. */
-static void settings_fill_default_name(const struct menu_selection *menu,
-                                       char *buffer, size_t capacity)
-{
-    const char *value;
-    if (menu->boot.default_target == BOOT_TARGET_ANDROID)
-        value = kshim_menu_role_name(KSHIM_MENU_ROLE_ANDROID, NULL);
-    else if (menu->boot.default_target == BOOT_TARGET_INTERNAL)
-        value = kshim_menu_role_name(KSHIM_MENU_ROLE_INTERNAL, NULL);
-    else if (menu->boot.default_target == BOOT_TARGET_TF)
-        value = kshim_menu_role_name(KSHIM_MENU_ROLE_TF, NULL);
-    else if (menu->caller_roles && menu->original_initial < menu->caller_count)
-        value = kshim_menu_role_name(menu->caller_roles[menu->original_initial],
-                                     kshim_menu_text(KSHIM_TEXT_DEFAULT_MANIFEST));
-    else
-        value = kshim_menu_text(KSHIM_TEXT_DEFAULT_MANIFEST);
-    snprintf(buffer, capacity, kshim_menu_text(KSHIM_TEXT_SETTINGS_DEFAULT_FMT), value);
-}
 /* Build every page for the session-settings entry point. Pages 0..3 keep the
  * localized+info meaning; pages 4..6 are the new Settings / Device / Default
  * pages. */
@@ -1264,12 +1257,21 @@ static int menu_fill_settings(struct menu_selection *menu)
                             kshim_menu_text(KSHIM_TEXT_UNAVAILABLE),
                             MENU_UNAVAILABLE, 0, role))
                 return -1;
-        } else if (menu_append(&menu->pages[page_index],
+        } else {
+            size_t row = menu->pages[page_index].count;
+            if (menu_append(&menu->pages[page_index],
                                kshim_menu_role_name(role, menu->caller_names[i]),
                                kshim_menu_role_description(role,
                                    menu->caller_descriptions ? menu->caller_descriptions[i] : NULL),
                                MENU_PAYLOAD, i, role)) {
-            return -1;
+                return -1;
+            }
+            /* A generic (role-unknown) Linux payload can be the resolved
+             * cold-boot default too; focus its row like the fixed rows do. */
+            if (menu->default_ok && i == menu->original_initial) {
+                menu->page = page_index;
+                menu->pages[page_index].initial = row;
+            }
         }
     }
 
@@ -1277,10 +1279,10 @@ static int menu_fill_settings(struct menu_selection *menu)
         menu->advanced_row = menu->pages[MENU_PAGE_MAIN].count;
         if (menu_append(&menu->pages[MENU_PAGE_MAIN], KSHIM_STR_ADVANCED, KSHIM_MENU_DESC_ADVANCED,
                         MENU_ADVANCED, 0, KSHIM_MENU_ROLE_ADVANCED) ||
-            menu_append(&menu->pages[MENU_PAGE_ADVANCED], KSHIM_STR_RECOVERY, KSHIM_MENU_DESC_RECOVERY,
-                        MENU_RECOVERY, 0, KSHIM_MENU_ROLE_RECOVERY) ||
             menu_append(&menu->pages[MENU_PAGE_ADVANCED], KSHIM_STR_FASTBOOT, KSHIM_MENU_DESC_FASTBOOT,
                         MENU_FASTBOOT, 0, KSHIM_MENU_ROLE_FASTBOOT) ||
+            menu_append(&menu->pages[MENU_PAGE_ADVANCED], KSHIM_STR_RECOVERY, KSHIM_MENU_DESC_RECOVERY,
+                        MENU_RECOVERY, 0, KSHIM_MENU_ROLE_RECOVERY) ||
             menu_append(&menu->pages[MENU_PAGE_ADVANCED], KSHIM_STR_EDL, KSHIM_MENU_DESC_EDL,
                         MENU_EDL, 0, KSHIM_MENU_ROLE_EDL) ||
             menu_append(&menu->pages[MENU_PAGE_ADVANCED], KSHIM_STR_BACK, KSHIM_MENU_DESC_BACK,
@@ -1306,19 +1308,9 @@ static int menu_fill_settings(struct menu_selection *menu)
         return -1;
 #endif
 
-    /* Settings page: device / default / language / back. */
-    settings_fill_device_name(menu, menu->setting_device_name, sizeof(menu->setting_device_name));
-    menu->device_entry_row = menu->pages[MENU_PAGE_SETTINGS].count;
-    if (menu_append(&menu->pages[MENU_PAGE_SETTINGS], menu->setting_device_name,
-                    kshim_menu_text(KSHIM_TEXT_DEVICE_DESC), MENU_DEVICE, 0,
-                    KSHIM_MENU_ROLE_DEVICE))
-        return -1;
-    settings_fill_default_name(menu, menu->setting_default_name, sizeof(menu->setting_default_name));
-    menu->default_entry_row = menu->pages[MENU_PAGE_SETTINGS].count;
-    if (menu_append(&menu->pages[MENU_PAGE_SETTINGS], menu->setting_default_name,
-                    kshim_menu_text(KSHIM_TEXT_DEFAULT_DESC), MENU_DEFAULT, 0,
-                    KSHIM_MENU_ROLE_DEFAULT))
-        return -1;
+    /* Settings page: language / back. Device identity and the last-boot
+     * record live on the read-only Device info page; the boot target is
+     * remembered automatically, so there is no default-entry row. */
 #if KSHIM_MENU_LANGUAGE_ENABLED
     menu->language_entry_row = menu->pages[MENU_PAGE_SETTINGS].count;
     if (menu_append(&menu->pages[MENU_PAGE_SETTINGS], KSHIM_MENU_TEXT_LANGUAGE_LABEL,
@@ -1331,24 +1323,16 @@ static int menu_fill_settings(struct menu_selection *menu)
                     MENU_BACK, 0, KSHIM_MENU_ROLE_BACK))
         return -1;
 
-    /* Device page: auto / TB322FC / TB323FU / back. */
-    if (menu_append(&menu->pages[MENU_PAGE_DEVICE], KSHIM_MENU_LABEL_DEV_AUTO,
-                    kshim_menu_text(KSHIM_TEXT_DEVICE_AUTO_DESC), MENU_DEVICE_SET, BOOT_DEVICE_AUTO,
-                    KSHIM_MENU_ROLE_DEVICE_AUTO) ||
-        menu_append(&menu->pages[MENU_PAGE_DEVICE], KSHIM_MENU_LABEL_DEV_322,
-                    kshim_menu_text(KSHIM_TEXT_DEVICE_TB322FC_DESC), MENU_DEVICE_SET, BOOT_DEVICE_TB322FC,
-                    KSHIM_MENU_ROLE_DEVICE_TB322FC) ||
-        menu_append(&menu->pages[MENU_PAGE_DEVICE], KSHIM_MENU_LABEL_DEV_323,
-                    kshim_menu_text(KSHIM_TEXT_DEVICE_TB323FU_DESC), MENU_DEVICE_SET, BOOT_DEVICE_TB323FU,
-                    KSHIM_MENU_ROLE_DEVICE_TB323FU) ||
-        menu_append(&menu->pages[MENU_PAGE_DEVICE], "Xiaomi Pad 6S Pro",
-                    "sheng (SM8550)", MENU_DEVICE_SET, BOOT_DEVICE_SHENG,
+    /* Device is fixed for this build; the page is retained for the Back
+     * action machinery but is no longer reachable from Settings. */
+    if (menu_append(&menu->pages[MENU_PAGE_DEVICE], "Xiaomi Pad 6S Pro",
+                    "sheng (SM8550)", MENU_UNAVAILABLE, 0,
                     KSHIM_MENU_ROLE_DEVICE) ||
         menu_append(&menu->pages[MENU_PAGE_DEVICE], KSHIM_MENU_ACTION_BACK,
                     KSHIM_MENU_DESC_BACK_PARENT,
                     MENU_BACK, 0, KSHIM_MENU_ROLE_BACK))
         return -1;
-    menu->pages[MENU_PAGE_DEVICE].initial = (size_t)menu->boot.device_choice;
+    menu->pages[MENU_PAGE_DEVICE].initial = 0;
 
     /* Default page: Android / internal / TF / back. A row is selectable only
      * when its target resolves to a unique candidate; otherwise it stays
@@ -1433,10 +1417,10 @@ static int menu_fill(struct menu_selection *menu)
         menu->advanced_row = menu->pages[0].count;
         if (menu_append(&menu->pages[0], KSHIM_STR_ADVANCED, KSHIM_MENU_DESC_ADVANCED,
                         MENU_ADVANCED, 0, KSHIM_MENU_ROLE_ADVANCED) ||
-            menu_append(&menu->pages[1], KSHIM_STR_RECOVERY, KSHIM_MENU_DESC_RECOVERY,
-                        MENU_RECOVERY, 0, KSHIM_MENU_ROLE_RECOVERY) ||
             menu_append(&menu->pages[1], KSHIM_STR_FASTBOOT, KSHIM_MENU_DESC_FASTBOOT,
                         MENU_FASTBOOT, 0, KSHIM_MENU_ROLE_FASTBOOT) ||
+            menu_append(&menu->pages[1], KSHIM_STR_RECOVERY, KSHIM_MENU_DESC_RECOVERY,
+                        MENU_RECOVERY, 0, KSHIM_MENU_ROLE_RECOVERY) ||
             menu_append(&menu->pages[1], KSHIM_STR_EDL, KSHIM_MENU_DESC_EDL,
                         MENU_EDL, 0, KSHIM_MENU_ROLE_EDL) ||
             menu_append(&menu->pages[1], KSHIM_STR_BACK, KSHIM_MENU_DESC_BACK,
@@ -1506,6 +1490,11 @@ static int menu_build(struct menu_selection *menu, const char *const *names,
     if (settings) {
         struct boot_settings boot;
         if (boot_settings_init(&boot) != BOOT_SETTINGS_OK) return -1;
+#if defined(CONFIG_KSHIM_BOOT_LAST) && CONFIG_KSHIM_BOOT_LAST
+        /* The saved last boot is the cold-boot default; an explicit Default
+         * page choice made later in this session still wins. */
+        boot.default_target = BOOT_TARGET_MANIFEST;
+#endif
         menu->boot = boot;
         settings_recompute_candidates(menu);
         settings_resolve_default(menu);
@@ -1918,6 +1907,14 @@ static int platform_select(uint64_t fdt, const char *const *names,
             (void)delay(5000);
         }
         if (!status) {
+            /* A selection can take a while to hand off to the payload; leave a
+             * visible hint on the last frame instead of a frozen menu. */
+            kshim_lvgl_set_countdown(&Lvgl, 0);
+            kshim_lvgl_set_status(&Lvgl, KSHIM_STR_BOOTING);
+            {
+                uint64_t hint_start = get_current_time();
+                while (get_current_time() - hint_start < 800U) menu_frame();
+            }
 #if CONFIG_KSHIM_DIAGNOSTIC_UI_ONLY
             int close = kshim_platform_prepare_handoff();
             ui_probe_report((void *)(uintptr_t)fdt, close, *selected);
