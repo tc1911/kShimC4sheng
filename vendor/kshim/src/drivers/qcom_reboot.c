@@ -93,12 +93,15 @@ int kshim_qcom_reboot_parse(const void *fdt,
         kshim_dt_spmi_identity(fdt, provider, &parsed.controller,
                               &parsed.bus, &parsed.sid))
         return KSHIM_QCOM_REBOOT_INVALID_DT;
+    /* Some SDAM bindings carry only the base cell; the peripheral window is
+     * then the 0x100-byte region the cells live in. */
     p = fdt_getprop(fdt, provider, "reg", &length);
-    if (!p || length < 8) return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (!p || length < 4) return KSHIM_QCOM_REBOOT_INVALID_DT;
     base = fdt32_to_cpu(p[0]);
-    size = fdt32_to_cpu(p[1]);
+    size = length >= 8 ? fdt32_to_cpu(p[1]) : 0x100U;
+    if (!size) size = 0x100U;
     if (!base || (base & 0xffU) || base > UINT16_MAX - 255U ||
-        !size || size > UINT16_MAX - base)
+        size > UINT16_MAX - base)
         return KSHIM_QCOM_REBOOT_INVALID_DT;
     p = fdt_getprop(fdt, cell, "reg", &length);
     if (!p || length != 8 || fdt32_to_cpu(p[1]) != 1)
@@ -176,50 +179,6 @@ static int dload_write(const struct kshim_qcom_reboot_config *c, uint32_t value)
     return scm_call(SCM_IO_WRITE, 2, c->dload_address, value, NULL);
 }
 
-int kshim_qcom_nv_read(const void *fdt, uint32_t offset, void *buffer,
-                       uint32_t length)
-{
-    struct kshim_qcom_reboot_config c;
-    if (!buffer || !length || (length & 3U) || (offset & 3U) ||
-        offset < 0x40U)
-        return KSHIM_QCOM_REBOOT_INVALID_DT;
-    if (kshim_qcom_reboot_parse(fdt, &c))
-        return KSHIM_QCOM_REBOOT_UNSUPPORTED;
-    if (!c.sdam_size || offset > c.sdam_size || length > c.sdam_size - offset)
-        return KSHIM_QCOM_REBOOT_INVALID_DT;
-    for (uint32_t i = 0; i < length; i += 4) {
-        uint32_t word = 0;
-        if (scm_call(SCM_IO_READ, 1, c.sdam_base + offset + i, 0, &word))
-            return KSHIM_QCOM_REBOOT_IO_FAILED;
-        ((uint8_t *)buffer)[i + 0] = (uint8_t)word;
-        ((uint8_t *)buffer)[i + 1] = (uint8_t)(word >> 8);
-        ((uint8_t *)buffer)[i + 2] = (uint8_t)(word >> 16);
-        ((uint8_t *)buffer)[i + 3] = (uint8_t)(word >> 24);
-    }
-    return 0;
-}
-
-int kshim_qcom_nv_write(const void *fdt, uint32_t offset, const void *buffer,
-                        uint32_t length)
-{
-    struct kshim_qcom_reboot_config c;
-    if (!buffer || !length || (length & 3U) || (offset & 3U) ||
-        offset < 0x40U)
-        return KSHIM_QCOM_REBOOT_INVALID_DT;
-    if (kshim_qcom_reboot_parse(fdt, &c))
-        return KSHIM_QCOM_REBOOT_UNSUPPORTED;
-    if (!c.sdam_size || offset > c.sdam_size || length > c.sdam_size - offset)
-        return KSHIM_QCOM_REBOOT_INVALID_DT;
-    for (uint32_t i = 0; i < length; i += 4) {
-        const uint8_t *b = (const uint8_t *)buffer + i;
-        uint32_t word = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
-                        ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
-        if (scm_call(SCM_IO_WRITE, 2, c.sdam_base + offset + i, word, NULL))
-            return KSHIM_QCOM_REBOOT_IO_FAILED;
-    }
-    return 0;
-}
-
 /* A separate adapter leaves the key-input adapter's read-only contract intact.
  * It never configures interrupts or PMIC ownership. CrDK refuses foreign-EE
  * write channels before the cookie write can be submitted. */
@@ -227,7 +186,7 @@ static struct {
     SpmiDeviceContext controller;
     struct kshim_qcom_reboot_config config;
     uintptr_t read_command, write_command, write_data;
-    int fault, writing, ready;
+    int fault, writing, ready, nv_access;
 } reboot_spmi;
 
 static int region_contains(const SpmiMemoryRegion *region, uintptr_t address,
@@ -271,9 +230,10 @@ static void spmi_mmio_write(void *context, UINTN address, UINT32 value)
 {
     (void)context;
     if (!spmi_address_valid(address) ||
-        (address != reboot_spmi.read_command &&
-         !(reboot_spmi.writing && (address == reboot_spmi.write_command ||
-                                   address == reboot_spmi.write_data)))) {
+        (!reboot_spmi.nv_access &&
+         (address != reboot_spmi.read_command &&
+          !(reboot_spmi.writing && (address == reboot_spmi.write_command ||
+                                    address == reboot_spmi.write_data))))) {
         reboot_spmi.fault = 1;
         return;
     }
@@ -371,6 +331,61 @@ __attribute__((weak)) int kshim_qcom_reboot_spmi_write(
     if (CR_ERROR(status) || reboot_spmi.fault) { kshim_qcom_reboot_spmi_detail = 10; return -1; }
     return 0;
 }
+
+int kshim_qcom_nv_read(const void *fdt, uint32_t offset, void *buffer,
+                       uint32_t length)
+{
+    struct kshim_qcom_reboot_config c;
+    if (!buffer || !length || (offset & 3U) || offset < 0x40U)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (kshim_qcom_reboot_parse(fdt, &c))
+        return KSHIM_QCOM_REBOOT_UNSUPPORTED;
+    if (!c.sdam_size || offset > c.sdam_size || length > c.sdam_size - offset)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (kshim_qcom_reboot_spmi_prepare(&c))
+        return KSHIM_QCOM_REBOOT_IO_FAILED;
+    reboot_spmi.nv_access = 1;
+    reboot_spmi.fault = 0;
+    int result = 0;
+    for (uint32_t i = 0; i < length; i += 8) {
+        uint32_t n = length - i > 8 ? 8 : length - i;
+        CR_STATUS status = SpmiRead(&reboot_spmi.controller, c.sid,
+                                    (UINT16)(offset + i),
+                                    (UINT8 *)buffer + i, n);
+        if (CR_ERROR(status) || reboot_spmi.fault) { result = -1; break; }
+    }
+    reboot_spmi.nv_access = 0;
+    return result ? KSHIM_QCOM_REBOOT_IO_FAILED : 0;
+}
+
+int kshim_qcom_nv_write(const void *fdt, uint32_t offset, const void *buffer,
+                        uint32_t length)
+{
+    struct kshim_qcom_reboot_config c;
+    if (!buffer || !length || (offset & 3U) || offset < 0x40U)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (kshim_qcom_reboot_parse(fdt, &c))
+        return KSHIM_QCOM_REBOOT_UNSUPPORTED;
+    if (!c.sdam_size || offset > c.sdam_size || length > c.sdam_size - offset)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (kshim_qcom_reboot_spmi_prepare(&c))
+        return KSHIM_QCOM_REBOOT_IO_FAILED;
+    reboot_spmi.nv_access = 1;
+    reboot_spmi.fault = 0;
+    reboot_spmi.writing = 1;
+    int result = 0;
+    for (uint32_t i = 0; i < length; i += 8) {
+        uint32_t n = length - i > 8 ? 8 : length - i;
+        CR_STATUS status = SpmiWrite(&reboot_spmi.controller, c.sid,
+                                     (UINT16)(offset + i),
+                                     (const UINT8 *)buffer + i, n);
+        if (CR_ERROR(status) || reboot_spmi.fault) { result = -1; break; }
+    }
+    reboot_spmi.writing = 0;
+    reboot_spmi.nv_access = 0;
+    return result ? KSHIM_QCOM_REBOOT_IO_FAILED : 0;
+}
+
 
 int kshim_qcom_reboot_request(const void *fdt, enum kshim_qcom_reboot_target target)
 {
