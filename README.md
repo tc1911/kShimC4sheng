@@ -37,8 +37,8 @@
   CrDK 支持的 5/7/8/8.5。Recovery/Fastboot 已验证，EDL 未试。
 - 设备信息：ABL DT 根是 `qcom,kalama*` 而非 `qcom,sm8550`，已兼容；
   内存 7888 MiB（`/memory` 里有一个 size=0 的占位 bank，已跳过）。
-- 设备选择页新增 `Xiaomi Pad 6S Pro (sheng / SM8550)`（0.0.2 起设备固定为
-  sheng，设置页不再显示设备选择）。
+- 设备信息识别为 `Xiaomi Pad 6S Pro (sheng / SM8550)`；0.0.2 起设备固定为
+  sheng，设置页不再显示设备选择。
 - 上次启动：`CONFIG_KSHIM_BOOT_LAST` 把选中条目写进 PMIC SDAM
   `0x8400/0x8500` 的 `0x50/0x60`（`KSET` 记录 + CRC32，双份回退）。没有记录或
   记录失效时回退 manifest 默认（Android），不会阻止手动选择。

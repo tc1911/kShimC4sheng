@@ -45,7 +45,7 @@ sheng 设备适配补丁（相对 kShimC 快照）见
 | `vendor/kshim/` | [sunflower2333/kShimC](https://github.com/sunflower2333/kShimC) | 经 [mydanyi/armadaos-freedom](https://github.com/mydanyi/armadaos-freedom) 提交 `244b74516d99d06cb0518609ce4b842ab278be8a`（2026-10-22）的 `devices/lenovo-tb323fu/boot/kshim-success-source` 快照 | GPL-3.0 |
 | `vendor/packer/` | [Project-Aloha/DualBootKernelPatcher](https://github.com/Project-Aloha/DualBootKernelPatcher)（MultiBootKernelPatcher v2.0.0.0；源自 DuoWoA/AlohaWoA 的 SurfaceDuoDualBootKernelPatcher 系列） | 经 armadaos-freedom 的 `packages/kshim-tools/vendor/packer` 快照 | GPL-3.0-or-later |
 | `vendor/packer/lib/inih/` | [benhoyt/inih](https://github.com/benhoyt/inih) | 随 MBKP 快照，未单独固定 revision | BSD-3-Clause |
-| `prebuilt/sheng-runtime.bin` | 本仓库从 `vendor/kshim` 构建 | 4 MiB，sha256 `d8e1becbb584d96d1fdf231e33bbf70dd779905c887ce2ea226054877bc7bd73` | GPL-3.0 |
+| `prebuilt/sheng-runtime.bin` | 本仓库从 `vendor/kshim` 构建 | 4 MiB，sha256 `a24ac1ef81c11abbaa2e640b3dc0b1f8928f508fe1dfa035d9761773ceaacbb4` | GPL-3.0 |
 | `prebuilt/windows/*.exe` | 本仓库从 `vendor/packer` 交叉编译 | LLVM-MinGW 20261020（UCRT，x86-64），`-DBUILD_SHIMS=OFF` | GPL-3.0-or-later |
 
 `vendor/kshim` 的 runtime 上游文档写明使用 **picolibc 1.8.11** 与 **LVGL 9.2.2**；
@@ -92,10 +92,18 @@ sheng 设备适配补丁（相对 kShimC 快照）见
   `src/dt/resources.c`：`CONFIG_KSHIM_SPLASH_FALLBACK` 直接复用 ABL 的
   `cont_splash_region`（SDE 路由解码仍失败，见 README）。
 - `src/drivers/qcom_reboot.c`：接受 SPMI 仲裁器 v5/v7/v8/8.5（sheng 是 v7），
-  并增加 stage/detail 诊断。
+  增加 stage/detail 诊断；解析 `qcom,spmi-sdam` 的 `reg`（兼容 4-cell），
+  为 NV 访问提供 SDAM 基址。
+- `src/drivers/qcom_nv.c`、`src/include/qcom_nv.h`：新增“上次启动”记录，
+  写到 PMIC SDAM `0x8400/0x8500` 的 `0x50/0x60`，双份 `KSET` 记录 + CRC32；
+  `CONFIG_KSHIM_BOOT_LAST` 开启时预选上次条目，记录失效回退 Android。
 - `src/core/platform.c`、`src/core/boot_settings.c`、`src/include/boot_settings.h`：
   设备选择页加入 Xiaomi Pad 6S Pro；新增 `CONFIG_KSHIM_MENU_SINGLE_LINUX`
-  （无 TF 卡时精简菜单）。
+  （无 TF 卡时精简菜单）。0.0.2 起设备固定为 sheng，设置页只保留语言切换，
+  “上次启动”移到设备信息页；确认条目后显示“正在启动，请稍候”。
+- `src/core/menu_locale.c`、`src/include/menu_locale.h`、`src/include/menu_text.h`：
+  版本 0.0.2 文案、署名“原作者：B站 单翼，适配维护：tc191｜免费使用，谨防
+  收费诈骗。”与启动提示的中英文案。
 - `ports/crdk/patches/0002-freestanding-resources.patch`：CrDK `CrSplashRead()`
   放宽 legacy 路径的 pipe 数限制（见 `UPSTREAM.json` 中的 sha256）。
 
@@ -110,6 +118,9 @@ sheng 设备适配补丁（相对 kShimC 快照）见
 
 - `packer/fdt.py` 替代 `dtc`/`fdtput`/`fdtget`，因此 Windows 构建不再依赖
   MSYS2 或 device-tree-compiler；行为由 `tests/test_fdt.py` 覆盖。
+- `vendor/kshim/src/ui/fonts/lxgw_wenkai_menu.ksf`：基于 LXGW WenKai
+  （SIL OFL 1.1）的菜单子集，0.0.2 重新生成到 708 字，加入“者 / 正 / 稍 / 候”；
+  来源、源文件 sha256 与字形数见同目录 `.provenance.json`。
 - `packer/make_boot.py --distro-boot` 直接解析发行版 boot.img，Linux 与 Windows
   共用同一条 Python 路径。
 
