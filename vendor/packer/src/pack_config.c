@@ -25,11 +25,19 @@ static bool copy_text(char *destination, size_t size, const char *value)
   return true;
 }
 
+static bool is_absolute_path(const char *value)
+{
+  if (value[0] == '/' || value[0] == '\\')
+    return true;
+  return value[0] != '\0' && value[1] == ':' &&
+         (value[2] == '/' || value[2] == '\\');
+}
+
 static bool resolve_path(
     char *destination, size_t size, const char *configDirectory,
     const char *value)
 {
-  if (value[0] == '/')
+  if (is_absolute_path(value))
     return copy_text(destination, size, value);
 
   int written = snprintf(destination, size, "%s/%s", configDirectory, value);
@@ -282,6 +290,9 @@ static bool
 get_config_directory(const char *configPath, char *directory, size_t size)
 {
   const char *separator = strrchr(configPath, '/');
+  const char *backslash = strrchr(configPath, '\\');
+  if (backslash != NULL && (separator == NULL || backslash > separator))
+    separator = backslash;
   if (separator == NULL)
     return copy_text(directory, size, ".");
 

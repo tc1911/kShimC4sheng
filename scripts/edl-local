@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Prefer the locally patched edlclient; fall back to the system install.
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+if [ -d "$ROOT/tools/edlclient" ]; then
+  export PYTHONPATH="$ROOT/tools${PYTHONPATH:+:$PYTHONPATH}"
+fi
+exec python3 /usr/bin/edl "$@"

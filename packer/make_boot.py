@@ -15,16 +15,20 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import sys
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bootimg  # noqa: E402
 import manifest  # noqa: E402
+import fdt  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-DEFAULT_PACKER = os.path.join(ROOT, "build", "packer", "MultiBootKernelPatcher")
+DEFAULT_PACKER = os.environ.get("KSHIM_PACKER") or os.path.join(
+    ROOT, "build", "packer",
+    "MultiBootKernelPatcher" + (".exe" if os.name == "nt" else ""))
 DEFAULT_PARTITION = 201326592  # sheng boot_a/b, 192 MiB
 AVB_RESERVE = 64 * 1024
 DTB_MAGIC = b"\xd0\x0d\xfe\xed"
@@ -54,34 +58,26 @@ def read(path, label):
 
 
 def patch_dtb(src, dst, bootargs, initrd_index):
-    fdtput = tool("fdtput")
-    fdtget = tool("fdtget")
-    dtc = tool("dtc")
+    """Edit /chosen with the pure-Python FDT code (works on Windows too)."""
     with open(src, "rb") as f:
-        head = f.read(8)
-    if head[:4] != DTB_MAGIC:
-        die("%s is not a device tree blob (magic %r)" % (src, head[:4]))
-    # fdtput cannot grow a blob; recompile with slack for /chosen.
-    subprocess.run([dtc, "-I", "dtb", "-O", "dtb", "-p", "8192",
-                    "-o", dst, src], check=True, capture_output=True)
-
-    # -c fails when /chosen already exists (FDT_ERR_EXISTS); that is fine.
-    subprocess.run([fdtput, "-c", dst, "/chosen"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run([fdtput, "-t", "s", dst, "/chosen", "bootargs", bootargs], check=True)
+        blob = f.read()
+    try:
+        tree = fdt.Fdt.parse(blob)
+    except fdt.FdtError as e:
+        die("%s: %s" % (src, e))
+    tree.set("/chosen", "bootargs", bootargs.encode("utf-8") + b"\0")
     if initrd_index is not None:
-        subprocess.run([fdtput, "-t", "u", dst, "/chosen",
-                        "kshim,initrd-entry", str(initrd_index)], check=True)
+        tree.set("/chosen", "kshim,initrd-entry", int(initrd_index).to_bytes(4, "big"))
     else:
-        subprocess.run([fdtput, "-d", dst, "/chosen", "kshim,initrd-entry"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tree.delete("/chosen", "kshim,initrd-entry")
     for prop in ("linux,initrd-start", "linux,initrd-end"):
-        subprocess.run([fdtput, "-d", dst, "/chosen", prop],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tree.delete("/chosen", prop)
+    tree.write(dst)
 
-    got = subprocess.run([fdtget, "-t", "s", dst, "/chosen", "bootargs"],
-                         check=True, capture_output=True, text=True).stdout.strip()
-    if got != bootargs:
+    with open(dst, "rb") as f:
+        check = fdt.Fdt.parse(f.read())
+    got = check.get("/chosen", "bootargs")
+    if got != bootargs.encode("utf-8") + b"\0":
         die("DTB /chosen bootargs mismatch: %r" % got)
 
 
@@ -209,7 +205,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stock-boot", required=True, help="stock boot_a image/dump")
-    ap.add_argument("--linux-image", required=True, help="raw ARM64 Linux Image")
+    ap.add_argument("--distro-boot", help="community Linux boot image (Image.gz + DTB [+ initrd])")
+    ap.add_argument("--linux-image", help="raw ARM64 Linux Image")
     ap.add_argument("--dtb", help="sheng DTB (required unless --no-dtb)")
     ap.add_argument("--no-dtb", action="store_true",
                     help="diagnostic: omit the DTB entry and pass the ABL DT through")
@@ -225,12 +222,31 @@ def main():
     ap.add_argument("--pad-to", type=int, help="pad the boot image to this size")
     ap.add_argument("--keep-work", action="store_true")
     args = ap.parse_args()
-    for name in ("stock_boot", "linux_image", "dtb", "initrd", "runtime",
+    for name in ("stock_boot", "distro_boot", "linux_image", "dtb", "initrd", "runtime",
                  "packer", "out", "work"):
         value = getattr(args, name)
         if value:
             setattr(args, name, os.path.abspath(value))
 
+    if args.distro_boot and (args.linux_image or args.dtb or args.initrd):
+        die("--distro-boot cannot be combined with --linux-image/--dtb/--initrd")
+    distro_tmp = None
+    if args.distro_boot:
+        import extract
+        tmp = tempfile.mkdtemp(prefix="kshim-distro-")
+        distro_tmp = tmp
+        try:
+            got = extract.extract(args.distro_boot, tmp, "linux")
+        except Exception as e:
+            die("cannot extract %s: %s" % (args.distro_boot, e))
+        if "dtb" not in got:
+            die("distro boot image has no appended DTB; pass --linux-image/--dtb instead")
+        args.linux_image = got["kernel"]["path"]
+        args.dtb = got["dtb"]["path"]
+        if "initrd" in got:
+            args.initrd = got["initrd"]["path"]
+    if not args.linux_image:
+        die("--linux-image is required unless --distro-boot")
     if args.no_dtb and args.dtb:
         die("--dtb and --no-dtb are mutually exclusive")
     if not args.no_dtb and not args.dtb:
@@ -338,6 +354,8 @@ def main():
         json.dump(report, f, indent=2, ensure_ascii=False)
     if not args.keep_work:
         shutil.rmtree(work, ignore_errors=True)
+    if distro_tmp:
+        shutil.rmtree(distro_tmp, ignore_errors=True)
     print(json.dumps({k: report[k] for k in
                       ("output", "size", "free", "header_version", "sha256")},
                      indent=2, ensure_ascii=False))
