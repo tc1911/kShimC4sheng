@@ -13,15 +13,16 @@
 菜单默认 8 秒后进 Android，音量键选择、电源键确认（sheng 的触屏驱动未适配，
 与两代 Y700 一样只用按键）。
 
-> 状态：**已在真机（sheng，A 槽）通过 `fastboot boot` 验证**。
+> 状态：**真机双系统已跑通（2026-10-23，sheng / A 槽）**。
+> Android 原厂与 Debian forky/KDE 都能从菜单正常引导。
+> 当前 `boot_a` = `out/boot_a_debian.img`，89,997,312 B，sha256
+> `7a20e585ecaccd8f03c1adb9f75ade44c3c030c57470ac37961cbba53287b449`。
+> `linux` 分区 128 GiB（`PARTLABEL=linux`），`userdata` 104.4 GiB。
 > 菜单 7 项、音量键/电源键、Android 原厂启动、高级启动里的
 > Recovery/Fastboot、设备信息、设备选择均正常。
-> 当前镜像 `out/boot_a.img` 139,489,280 B，sha256
-> `a26d1de624db5f58baad1f41b61fffa8cf830164f82a3a7868fd3c714c4f2de9`。
-> **已持久化刷入 `boot_a` 并验证重启后菜单仍在**（2026-10-23，A 槽）。
-> 刷机前备份在 `out/backup/`（boot_a/boot_b 同为 `ef558db2…`，
-> dtbo_a/dtbo_b 同为 `72eedcca…`）；回滚：
-> `fastboot flash boot_a out/backup/boot_a.img`。
+> 备份（原厂 boot/GPT/全部分区）在 `/home/tc191/6spBackup/rom/`；
+> 原厂 `boot_a` 回滚：`fastboot flash boot_a stock/boot_a-stock.img`。
+> 详细步骤见 `docs/sheng-debian-dual-boot.md`。
 
 ## 已验证 / sheng 适配要点
 
@@ -66,6 +67,7 @@ scripts/
   fetch_deps.sh    拉取 CrDK/picolibc/LVGL/libfdt（GitHub 镜像，需网络）
   fetch_toolchain.sh 在本机解包 aarch64 交叉工具链（Arch，无需 root）
   backup.sh        通过 adb 备份 boot/dtbo/init_boot/vendor_boot
+  backup-partitions.sh  备份除 super/userdata 外的全部分区 + 主/备 GPT
   flash.sh         刷 boot_a
 vendor/
   kshim/           五代 kShimC 快照（GPL-3.0）
