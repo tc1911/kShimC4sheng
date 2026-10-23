@@ -1008,6 +1008,15 @@ static void settings_recompute_candidates(struct menu_selection *menu)
             size_t caller = 0;
             if (!settings_role_match(menu, KSHIM_MENU_ROLE_TF, &caller) || caller != i) continue;
             target = BOOT_TARGET_TF;
+#if defined(CONFIG_KSHIM_MENU_SINGLE_LINUX) && CONFIG_KSHIM_MENU_SINGLE_LINUX
+        } else if (role == KSHIM_MENU_ROLE_UNKNOWN) {
+            /* The single-Linux configuration deliberately has no fixed
+             * internal row, so its manifest Linux entry keeps role UNKNOWN
+             * (and its own "Linux" label) but still needs to be a resolvable
+             * default candidate. Multiple unknown payloads stay ambiguous and
+             * are rejected by the shared unique-target resolver. */
+            target = BOOT_TARGET_INTERNAL;
+#endif
         } else {
             continue;
         }
