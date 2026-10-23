@@ -10,8 +10,8 @@
 - **Linux**：用内嵌的 Linux Image + DTB + 可选 initrd 启动 `linux` 分区上的
   rootfs（`root=PARTLABEL=linux`）。
 
-菜单默认 8 秒后进 Android，音量键选择、电源键确认（sheng 的触屏驱动未适配，
-与两代 Y700 一样只用按键）。
+首次启动默认 8 秒后进 Android，之后会记住上次启动的系统；音量键选择、
+电源键确认（sheng 的触屏驱动未适配，与两代 Y700 一样只用按键）。
 
 > 状态：**真机双系统已跑通（2026-10-24，sheng / A 槽，kShimC 0.0.2）**。
 > Android 原厂与 Debian forky/KDE 都能从菜单正常引导。
