@@ -164,7 +164,7 @@ set(SRC_FILES
     src/core/menu_locale.c src/core/boot_settings.c
     src/dt/dt.c src/dt/device_info.c src/dt/initrd.c src/dt/handoff.c src/dt/handoff_reservations.c src/dt/console.c src/dt/resources.c src/dt/probe.c
     src/dt/tb323fu_ramoops.c src/dt/tb323fu_ramoops_export.c
-    src/drivers/console.c src/drivers/pl011.c src/drivers/keys.c src/drivers/qcom_reboot.c
+    src/drivers/console.c src/drivers/pl011.c src/drivers/keys.c src/drivers/qcom_reboot.c src/drivers/qcom_nv.c
     src/arch/arm64/exception.c src/arch/arm64/relocation.c src/arch/arm64/mmu.c
     src/arch/arm64/psci.c src/arch/arm64/timer.c src/arch/arm64/gicv3.c
     src/arch/arm64/startup.S src/arch/arm64/arm64.S

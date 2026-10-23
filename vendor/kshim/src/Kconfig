@@ -144,6 +144,16 @@ menu "Framebuffer and UI"
             only Linux target, which suits devices with a single Linux
             partition and no microSD slot.
 
+    config KSHIM_BOOT_LAST
+        bool "Remember the last boot selection in PMIC SDAM"
+        depends on KSHIM_QCOM_REBOOT
+        default n
+        help
+            Store a small checksummed, double-buffered record in the PMIC
+            SDAM scratch area and preselect the last successfully chosen menu
+            entry on the next boot. The menu still appears and keeps its
+            timeout; no UFS partition or filesystem is needed.
+
     config KSHIM_MENU_POWER_ACTIONS
         bool "Enable firmware restart and power-off menu actions"
         default n

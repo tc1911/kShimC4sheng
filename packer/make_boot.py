@@ -66,6 +66,11 @@ def patch_dtb(src, dst, bootargs, initrd_index):
     except fdt.FdtError as e:
         die("%s: %s" % (src, e))
     tree.set("/chosen", "bootargs", bootargs.encode("utf-8") + b"\0")
+    # sheng's Linux DTB does not carry armada,root-medium. Tag the packaged
+    # Linux entry as internal so the menu's default-target resolver can
+    # address it (otherwise its role stays UNKNOWN and is not a candidate).
+    if tree.get("/chosen", "armada,root-medium") is None:
+        tree.set("/chosen", "armada,root-medium", b"internal\0")
     if initrd_index is not None:
         tree.set("/chosen", "kshim,initrd-entry", int(initrd_index).to_bytes(4, "big"))
     else:

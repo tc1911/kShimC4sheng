@@ -20,6 +20,7 @@ struct kshim_qcom_reboot_config {
     const void *fdt;
     uint64_t dload_address;
     uint16_t reason_address;
+    uint16_t sdam_base, sdam_size;
     uint8_t controller, bus, sid;
     uint8_t reason_shift, reason_mask;
 };
@@ -40,6 +41,13 @@ extern int kshim_qcom_reboot_last_stage;
 /* Sub-stage inside the SPMI prepare/read/write path. */
 extern int kshim_qcom_reboot_spmi_detail;
 int kshim_qcom_reboot_spmi_prepare(const struct kshim_qcom_reboot_config *config);
+
+/* 4-byte aligned SDAM access used by the last-boot record. Returns 0 on
+ * success; SCM IO failures are reported as KSHIM_QCOM_REBOOT_IO_FAILED. */
+int kshim_qcom_nv_read(const void *hardware_fdt, uint32_t offset,
+                       void *buffer, uint32_t length);
+int kshim_qcom_nv_write(const void *hardware_fdt, uint32_t offset,
+                        const void *buffer, uint32_t length);
 int kshim_qcom_reboot_spmi_read(const struct kshim_qcom_reboot_config *config,
                               uint8_t *value);
 int kshim_qcom_reboot_spmi_write(const struct kshim_qcom_reboot_config *config,

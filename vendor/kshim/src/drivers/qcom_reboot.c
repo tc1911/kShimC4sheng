@@ -85,15 +85,20 @@ int kshim_qcom_reboot_parse(const void *fdt,
     if (cell < 0 || !enabled_ancestors(fdt, cell))
         return KSHIM_QCOM_REBOOT_INVALID_DT;
     int provider = fdt_parent_offset(fdt, cell);
-    uint32_t ac, sc, base;
+    uint32_t ac, sc, base, size;
     if (provider < 0 ||
         fdt_node_check_compatible(fdt, provider, "qcom,spmi-sdam") ||
         dt_u32(fdt, provider, "#address-cells", &ac) || ac != 1 ||
         dt_u32(fdt, provider, "#size-cells", &sc) || sc != 1 ||
-        dt_u32(fdt, provider, "reg", &base) || !base || (base & 0xffU) ||
-        base > UINT16_MAX - 255U ||
         kshim_dt_spmi_identity(fdt, provider, &parsed.controller,
                               &parsed.bus, &parsed.sid))
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    p = fdt_getprop(fdt, provider, "reg", &length);
+    if (!p || length < 8) return KSHIM_QCOM_REBOOT_INVALID_DT;
+    base = fdt32_to_cpu(p[0]);
+    size = fdt32_to_cpu(p[1]);
+    if (!base || (base & 0xffU) || base > UINT16_MAX - 255U ||
+        !size || size > UINT16_MAX - base)
         return KSHIM_QCOM_REBOOT_INVALID_DT;
     p = fdt_getprop(fdt, cell, "reg", &length);
     if (!p || length != 8 || fdt32_to_cpu(p[1]) != 1)
@@ -107,6 +112,8 @@ int kshim_qcom_reboot_parse(const void *fdt,
     if (!p || length != 8 || fdt32_to_cpu(p[0]) != 1 ||
         fdt32_to_cpu(p[1]) != 7)
         return KSHIM_QCOM_REBOOT_INVALID_DT;
+    parsed.sdam_base = (uint16_t)base;
+    parsed.sdam_size = (uint16_t)size;
     parsed.reason_address = (uint16_t)(base + offset);
     parsed.reason_shift = 1;
     parsed.reason_mask = 0xfe;
@@ -167,6 +174,50 @@ static int dload_read(const struct kshim_qcom_reboot_config *c, uint32_t *value)
 static int dload_write(const struct kshim_qcom_reboot_config *c, uint32_t value)
 {
     return scm_call(SCM_IO_WRITE, 2, c->dload_address, value, NULL);
+}
+
+int kshim_qcom_nv_read(const void *fdt, uint32_t offset, void *buffer,
+                       uint32_t length)
+{
+    struct kshim_qcom_reboot_config c;
+    if (!buffer || !length || (length & 3U) || (offset & 3U) ||
+        offset < 0x40U)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (kshim_qcom_reboot_parse(fdt, &c))
+        return KSHIM_QCOM_REBOOT_UNSUPPORTED;
+    if (!c.sdam_size || offset > c.sdam_size || length > c.sdam_size - offset)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    for (uint32_t i = 0; i < length; i += 4) {
+        uint32_t word = 0;
+        if (scm_call(SCM_IO_READ, 1, c.sdam_base + offset + i, 0, &word))
+            return KSHIM_QCOM_REBOOT_IO_FAILED;
+        ((uint8_t *)buffer)[i + 0] = (uint8_t)word;
+        ((uint8_t *)buffer)[i + 1] = (uint8_t)(word >> 8);
+        ((uint8_t *)buffer)[i + 2] = (uint8_t)(word >> 16);
+        ((uint8_t *)buffer)[i + 3] = (uint8_t)(word >> 24);
+    }
+    return 0;
+}
+
+int kshim_qcom_nv_write(const void *fdt, uint32_t offset, const void *buffer,
+                        uint32_t length)
+{
+    struct kshim_qcom_reboot_config c;
+    if (!buffer || !length || (length & 3U) || (offset & 3U) ||
+        offset < 0x40U)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    if (kshim_qcom_reboot_parse(fdt, &c))
+        return KSHIM_QCOM_REBOOT_UNSUPPORTED;
+    if (!c.sdam_size || offset > c.sdam_size || length > c.sdam_size - offset)
+        return KSHIM_QCOM_REBOOT_INVALID_DT;
+    for (uint32_t i = 0; i < length; i += 4) {
+        const uint8_t *b = (const uint8_t *)buffer + i;
+        uint32_t word = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
+                        ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+        if (scm_call(SCM_IO_WRITE, 2, c.sdam_base + offset + i, word, NULL))
+            return KSHIM_QCOM_REBOOT_IO_FAILED;
+    }
+    return 0;
 }
 
 /* A separate adapter leaves the key-input adapter's read-only contract intact.
