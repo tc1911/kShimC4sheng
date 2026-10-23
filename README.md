@@ -56,6 +56,7 @@ packer/            boot 镜像解析、载荷提取、打包、manifest 校验
   bootimg.py       Android boot v0-v4 读写
   extract.py       从 stock / 社区 boot.img 提取 kernel、DTB、initrd
   make_boot.py     调 MultiBootKernelPatcher，产出 boot_a.img
+  fdt.py           纯 Python FDT 读写（替代 dtc/fdtput，Windows 可用）
   manifest.py      kShimC manifest 解析（校验用）
 config/
   sheng.env        分区大小、默认项、cmdline
@@ -71,9 +72,11 @@ scripts/
   flash.sh         刷 boot_a
 vendor/
   kshim/           五代 kShimC 快照（GPL-3.0）
-  packer/          MultiBootKernelPatcher（GPL-3.0）
+  packer/          MultiBootKernelPatcher（GPL-3.0-or-later）
+windows/           Windows 一键构建（.bat + build.py）
+prebuilt/          sheng runtime 与 Windows 可执行文件
 tests/             纯 Python 回归（合成镜像，不需要设备）
-docs/              架构、设备资料、上机计划、排障
+docs/              架构、设备资料、上机计划、排障、来源
 ```
 
 ## 最简构建（推荐）
@@ -180,10 +183,31 @@ DTB + initrd，更适合用这种方式先验证菜单和 Linux 启动。
 - 解锁 bootloader 是前提；sheng 的 EDL 恢复需要小米 service account。
 - 本项目不修改 `super`、`userdata`、`linux` 分区，只写 `boot_a`。
 
+## 来源与上游
+
+本项目不是从零实现，主要继承关系：
+
+- **kShimC runtime**：上游 [sunflower2333/kShimC](https://github.com/sunflower2333/kShimC)；
+  本仓库的 `vendor/kshim/` 是 [mydanyi/armadaos-freedom](https://github.com/mydanyi/armadaos-freedom)
+  提交 `244b74516d99d06cb0518609ce4b842ab278be8a` 中 `kshim-success-source` 的快照。
+- **MultiBootKernelPatcher**：`vendor/packer/`，来自
+  [Project-Aloha/DualBootKernelPatcher](https://github.com/Project-Aloha/DualBootKernelPatcher)
+  （v2.0.0.0，DuoWoA/AlohaWoA）。
+- **双系统布局 / 安装文档**：[code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux)。
+- **Debian rootfs**：[ianchb/debian-sheng](https://github.com/ianchb/debian-sheng)；
+  内核/boot：[ianchb/sm8550-mainline](https://github.com/ianchb/sm8550-mainline)
+  release `7.2.6-mac`；固件：[ianchb/sheng-firmware](https://github.com/ianchb/sheng-firmware)。
+- **TWRP**：[NoobMaster233/twrp-sheng-build](https://github.com/NoobMaster233/twrp-sheng-build)
+  v1.0.1；分区/头版本参考：[map220v/android_device_xiaomi_sheng](https://github.com/map220v/android_device_xiaomi_sheng)。
+
+`sheng` 设备适配、纯 Python FDT 编辑器、Windows 一键构建和本项目脚本是
+本仓库新增/修改的部分，逐项记录见 [`docs/provenance.md`](docs/provenance.md)。
+
 ## 许可证
 
-本项目按 **GPL-3.0** 发布（继承自 kShimC）。第三方组件和生成的 boot 镜像
-注意事项见 [`LICENSES.md`](LICENSES.md)。
+本项目按 **GPL-3.0** 发布（继承自 kShimC）。第三方组件、revision 和生成的
+boot 镜像注意事项见 [`LICENSES.md`](LICENSES.md) 与
+[`docs/provenance.md`](docs/provenance.md)。
 
 ## 测试
 
@@ -194,6 +218,4 @@ make test
 测试用合成 boot 镜像覆盖：v4 stock 解析、v0 `Image.gz`+DTB 提取、manifest
 布局、DTB `bootargs`、initrd 条目、超限拒绝、gzip 内核拒绝。
 
-## 许可
-
-GPL-3.0-or-later。`vendor/` 下为上游原样副本，见各自 LICENSE。
+`vendor/` 下为上游副本或按上游 revision 拉取的依赖，见各自 LICENSE。
