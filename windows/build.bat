@@ -12,17 +12,21 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if "%~1"=="" (
-  set "STOCK=backup\boot_a.img"
-  if not exist "!STOCK!" set "STOCK=out\backup\boot_a.img"
-  set "DISTRO=build\debian\boot.img"
-) else if "%~2"=="" (
-  set "STOCK=backup\boot_a.img"
-  if not exist "!STOCK!" set "STOCK=out\backup\boot_a.img"
-  set "DISTRO=%~1"
-) else (
-  set "STOCK=%~1"
-  set "DISTRO=%~2"
+set "STOCK="
+for %%F in (backup\boot_a.img out\backup\boot_a.img boot_a.img stock\boot_a.img stock\boot_a-stock.img) do (
+  if not defined STOCK if exist "%%F" set "STOCK=%%F"
+)
+set "DISTRO="
+for %%F in (build\debian\boot.img debian-boot.img distro-boot.img) do (
+  if not defined DISTRO if exist "%%F" set "DISTRO=%%F"
+)
+if not "%~1"=="" (
+  if "%~2"=="" (
+    set "DISTRO=%~1"
+  ) else (
+    set "STOCK=%~1"
+    set "DISTRO=%~2"
+  )
 )
 
 if not exist "!STOCK!" (
