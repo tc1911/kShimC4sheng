@@ -332,6 +332,71 @@ __attribute__((weak)) int kshim_qcom_reboot_spmi_write(
     return 0;
 }
 
+int kshim_qcom_spmi_init(const void *fdt)
+{
+    struct kshim_qcom_reboot_config c;
+    if (kshim_qcom_reboot_parse(fdt, &c)) return -1;
+    return kshim_qcom_reboot_spmi_prepare(&c);
+}
+
+int kshim_qcom_spmi_read_bytes(uint32_t sid, uint16_t address,
+                               void *buffer, uint32_t length)
+{
+    if (!reboot_spmi.ready || !buffer || !length) return -1;
+    reboot_spmi.fault = 0;
+    CR_STATUS status = SpmiRead(&reboot_spmi.controller, sid, address,
+                                buffer, length);
+    return (CR_ERROR(status) || reboot_spmi.fault) ? -1 : 0;
+}
+
+int kshim_qcom_spmi_write_bytes(uint32_t sid, uint16_t address,
+                                const void *buffer, uint32_t length)
+{
+    if (!reboot_spmi.ready || !buffer || !length) return -1;
+    reboot_spmi.fault = 0;
+    reboot_spmi.nv_access = 1;
+    CR_STATUS status = SpmiWrite(&reboot_spmi.controller, sid, address,
+                                 buffer, length);
+    reboot_spmi.nv_access = 0;
+    return (CR_ERROR(status) || reboot_spmi.fault) ? -1 : 0;
+}
+
+int kshim_qcom_spmi_read_rw(uint32_t sid, uint16_t address,
+                            void *buffer, uint32_t length)
+{
+    uint8_t *out = buffer;
+    if (!reboot_spmi.ready || !buffer || !length || length > 16) return -1;
+    uint32_t off = reboot_spmi.controller.PmicArb.Ops->GetChannelOffset(
+        &reboot_spmi.controller, (uint8_t)sid, address, SPMI_ARB_CHANNEL_RW);
+    if (off == UINT32_MAX) return -1;
+    uintptr_t base = reboot_spmi.controller.PmicArb.WriteAddr + off;
+    uint32_t cmd = (1U << 27) | ((uint32_t)(sid & 0xF) << 20) |
+                   ((uint32_t)address << 4) | (uint32_t)(length - 1);
+    reboot_spmi.nv_access = 1;
+    spmi_mmio_write(NULL, base + SPMI_PMIC_ARB_CMD, cmd);
+    for (int i = 0; i < 1000; ++i) {
+        uint32_t st = spmi_mmio_read(NULL, base + SPMI_PMIC_ARB_STATUS);
+        if (st & 1U) {
+            int bad = (st & 0xEU) != 0;
+            if (!bad) {
+                uint32_t v = spmi_mmio_read(NULL, base + SPMI_PMIC_ARB_RDATA0);
+                for (uint32_t b = 0; b < length && b < 4; ++b)
+                    out[b] = (uint8_t)(v >> (b * 8));
+                if (length > 4) {
+                    v = spmi_mmio_read(NULL, base + SPMI_PMIC_ARB_RDATA1);
+                    for (uint32_t b = 4; b < length && b < 8; ++b)
+                        out[b] = (uint8_t)(v >> ((b - 4) * 8));
+                }
+            }
+            reboot_spmi.nv_access = 0;
+            return bad ? -2 : 0;
+        }
+        (void)delay(1);
+    }
+    reboot_spmi.nv_access = 0;
+    return -3;
+}
+
 int kshim_qcom_nv_read(const void *fdt, uint32_t offset, void *buffer,
                        uint32_t length)
 {

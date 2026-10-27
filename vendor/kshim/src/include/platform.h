@@ -68,3 +68,4 @@ int kshim_platform_select_localized_settings(uint64_t fdt, const char *const *na
                                              uint32_t timeout_ms,
                                              uint64_t advanced_mask, size_t *selected);
 int kshim_platform_prepare_handoff(void);
+void kshim_platform_request_charger_ui(void);

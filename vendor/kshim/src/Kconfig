@@ -144,6 +144,18 @@ menu "Framebuffer and UI"
             only Linux target, which suits devices with a single Linux
             partition and no microSD slot.
 
+    config KSHIM_CHARGER_MODE
+        bool "Built-in charger screen for androidboot.mode=charger"
+        depends on KSHIM_FRAMEBUFFER && KSHIM_LVGL
+        default n
+        help
+            When the bootloader passes androidboot.mode=charger, replace the
+            menu with a built-in two-line charger screen instead of starting
+            any operating system. The screen stays on showing two lines;
+            holding the power key for two seconds reboots into the normal
+            menu. This is self-contained and does not depend on the installed
+            Linux distribution or its charger service.
+
     config KSHIM_BOOT_LAST
         bool "Remember the last boot selection in PMIC SDAM"
         depends on KSHIM_QCOM_REBOOT

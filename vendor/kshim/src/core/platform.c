@@ -27,6 +27,7 @@
 #include <qcom_reboot.h>
 #endif
 #include <qcom_nv.h>
+#include "../ui/charging_glyphs.h"
 
 /* With the runtime language switch on, every user-visible string resolves
  * through the locale table so the live selection flips platform text too; the
@@ -135,8 +136,10 @@ __attribute__((weak)) int kshim_menu_activate(kshim_menu_action_t action)
 static int SmpInitialized;
 #endif
 static QcomKeys Keys;
+static int KeysReady;
 static int build_keys(const void *fdt)
 {
+    if (KeysReady) return 0;
 #if CONFIG_KSHIM_DIAGNOSTIC_UI_ONLY
     (void)fdt; return -1;
 #elif CONFIG_QCOM_KEYS
@@ -155,6 +158,7 @@ static int build_keys(const void *fdt)
     status = QcomKeysInitEx(&Keys, descriptors, count, kshim_qcom_key_read32,
                             kshim_qcom_key_read32_status, NULL);
     QcomKeysSetDebounce(&Keys, CONFIG_QCOM_KEY_DEBOUNCE_SAMPLES);
+    if (!status) KeysReady = 1;
     return status;
 #else
     (void)fdt; return -1;
@@ -164,6 +168,10 @@ static int build_keys(const void *fdt)
  * -2 = entry transfer failed, 0 = GUI loop entered. */
 static int GuiStatus = -1;
 static char FailureDetail[64];
+#if defined(CONFIG_KSHIM_CHARGER_MODE) && CONFIG_KSHIM_CHARGER_MODE
+static int ChargerUiRequested;
+void kshim_platform_request_charger_ui(void) { ChargerUiRequested = 1; }
+#endif
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
 static kshim_framebuffer_t Framebuffer;
 static kshim_lvgl_t Lvgl;
@@ -468,7 +476,7 @@ static void start_touch(struct kshim_resources *r)
     if (!TouchReady) { (void)touch_quiesce(); kshim_lvgl_set_status(&Lvgl, KSHIM_STR_KEYS_HINT); }
 }
 #endif
-static int start_menu(const void *fdt)
+static int start_menu(const void *fdt, int skip_ui)
 {
     struct kshim_resources *r = kshim_resources_get();
     kshim_framebuffer_config_t config = r->framebuffer;
@@ -517,6 +525,9 @@ static int start_menu(const void *fdt)
                                    KSHIM_MMU_READ | KSHIM_MMU_WRITE);
     kshim_lvgl_set_scratch((void *)(uintptr_t)r->ui_scratch.base,
                            (size_t)r->ui_scratch.size);
+    /* Charger boot only needs the framebuffer and keys; do not build the
+     * menu or load LVGL at all. */
+    if (skip_ui) return 0;
 #if CONFIG_KSHIM_DIAGNOSTIC_UI_ONLY && CONFIG_KSHIM_DIAGNOSTIC_KEYS_DESCRIPTORS_ONLY
     ui_prepare_key_descriptors(fdt);
 #endif
@@ -570,6 +581,120 @@ static void menu_frame(void)
 #endif
 }
 #endif
+
+#if defined(CONFIG_KSHIM_CHARGER_MODE) && CONFIG_KSHIM_CHARGER_MODE && \
+    CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
+static const char ChargingLine1[] = "CHARGER CONNECTED";
+static const char ChargingLine2[] = "HOLD POWER TO BOOT";
+
+static const struct ChargingGlyphAscii *charging_ascii_glyph(char c)
+{
+    for (size_t i = 0; i < sizeof(ChargingAsciiGlyphs) / sizeof(ChargingAsciiGlyphs[0]); ++i)
+        if (ChargingAsciiGlyphs[i].C == c) return &ChargingAsciiGlyphs[i];
+    return &ChargingAsciiGlyphs[0];
+}
+
+static int32_t charging_text_width(const char *text)
+{
+    int32_t width = 0;
+    for (; *text; ++text) width += charging_ascii_glyph(*text)->Advance;
+    return width;
+}
+
+static void charging_text(int32_t x, int32_t y, const char *text)
+{
+    for (; *text; ++text) {
+        const struct ChargingGlyphAscii *g = charging_ascii_glyph(*text);
+        uint16_t stride = (uint16_t)((g->Width + 7U) / 8U);
+        for (int32_t r = 0; r < CHARGING_GLYPH_H; ++r) {
+            const uint8_t *row = g->Bits + r * stride;
+            int32_t c = 0;
+            while (c < (int32_t)g->Width) {
+                while (c < (int32_t)g->Width &&
+                       !(row[c / 8] & (0x80U >> (c % 8)))) ++c;
+                int32_t run = c;
+                while (c < (int32_t)g->Width &&
+                       (row[c / 8] & (0x80U >> (c % 8)))) ++c;
+                if (c > run)
+                    (void)kshim_fb_fill_rect(&Framebuffer,
+                        x + run, y + r, (uint32_t)(c - run), 1, true);
+            }
+        }
+        x += g->Advance;
+    }
+}
+
+static int charging_power_descriptor(void)
+{
+    for (int i = 0; i < Keys.Count; ++i)
+        if (Keys.Descriptors[i].Code == QCOM_KEYCODE_POWER)
+            return i;
+    return -1;
+}
+
+static int charging_pon_descriptor(void)
+{
+    for (int i = 0; i < Keys.Count; ++i)
+        if (Keys.Descriptors[i].Source == QCOM_KEY_SOURCE_PON)
+            return i;
+    return -1;
+}
+
+static int charging_reason_charger(void)
+{
+    int i = charging_pon_descriptor();
+    uint32_t value = 0;
+    if (i < 0) return 0;
+    if (kshim_qcom_key_read32_status(NULL,
+            Keys.Descriptors[i].Base + QCOM_PON_REASON1_OFFSET, &value) != 0)
+        return 0;
+    return (value & (QCOM_PON_REASON_DC_CHG | QCOM_PON_REASON_USB_CHG |
+                     QCOM_PON_REASON_CBL_CHG)) != 0;
+}
+
+static void charging_paint(void)
+{
+    int32_t w = (int32_t)Framebuffer.width;
+    int32_t h = (int32_t)Framebuffer.height;
+    int32_t y = h / 2 - (CHARGING_GLYPH_H + 20);
+    int32_t x1 = (w - charging_text_width(ChargingLine1)) / 2;
+    int32_t x2 = (w - charging_text_width(ChargingLine2)) / 2;
+
+    (void)kshim_fb_set_colors(&Framebuffer, UINT32_MAX, 0);
+    (void)kshim_fb_clear(&Framebuffer);
+    charging_text(x1, y, ChargingLine1);
+    charging_text(x2, y + CHARGING_GLYPH_H + 30, ChargingLine2);
+}
+
+static void charging_loop(void)
+{
+    int power = charging_power_descriptor();
+    uint64_t down_since = 0;
+    int released = 0;
+
+    if (power < 0)
+        return;
+    charging_paint();
+    for (;;) {
+        uint64_t now = get_current_time();
+        uint8_t pressed = 0;
+
+        if (QcomKeyReadPressed(&Keys, &Keys.Descriptors[power], &pressed) == 0) {
+            if (!pressed) {
+                released = 1;
+                down_since = 0;
+            } else if (released) {
+                if (!down_since) down_since = now;
+                if (now - down_since >= 2000) {
+                    (void)kshim_psci_request_system_reset();
+                    for (;;) (void)delay(100000);
+                }
+            }
+        }
+        (void)delay(50000);
+    }
+}
+#endif
 int kshim_platform_prepare_handoff(void)
 {
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
@@ -595,7 +720,7 @@ int kshim_platform_prepare_handoff(void)
 enum menu_action {
     MENU_PAYLOAD, MENU_ADVANCED, MENU_BACK, MENU_RESET, MENU_OFF,
     MENU_RECOVERY, MENU_FASTBOOT, MENU_EDL,
-    MENU_LANGUAGE, MENU_LANG_ZH, MENU_LANG_EN,
+    MENU_LANGUAGE, MENU_LANG_ZH, MENU_LANG_EN, MENU_BOOT_DELAY, MENU_DELAY_SET,
     /* Appended: the read-only Device info entry and its read-only field rows. */
     MENU_DEVICE_INFO, MENU_INFO_FIELD,
     /* Appended: the session-settings pages. MENU_UNAVAILABLE marks a system
@@ -618,7 +743,7 @@ struct menu_page {
 enum menu_page_id {
     MENU_PAGE_MAIN = 0, MENU_PAGE_ADVANCED = 1, MENU_PAGE_LANGUAGE = 2,
     MENU_PAGE_INFO = 3, MENU_PAGE_SETTINGS = 4, MENU_PAGE_DEVICE = 5,
-    MENU_PAGE_DEFAULT = 6, MENU_PAGE_COUNT = 7
+    MENU_PAGE_DEFAULT = 6, MENU_PAGE_DELAY = 7, MENU_PAGE_COUNT = 8
 };
 struct menu_selection {
     struct menu_page pages[MENU_PAGE_COUNT];
@@ -660,11 +785,14 @@ struct menu_selection {
     size_t candidate_caller[KSHIM_MENU_MAX_ENTRIES];
     size_t candidate_count;
     /* Focus memory for the settings pages. */
-    size_t settings_row, language_entry_row, device_entry_row, default_entry_row;
+    size_t settings_row, language_entry_row, delay_entry_row, device_entry_row, default_entry_row;
     /* Row names that carry the current value and must outlive the fill. */
     char setting_device_name[KSHIM_INFO_VALUE_LEN];
     char setting_default_name[KSHIM_INFO_VALUE_LEN];
     char setting_nv_name[KSHIM_INFO_VALUE_LEN];
+    char setting_delay_name[64];
+    char delay_option_names[7][24];
+    uint32_t boot_delay_ms;
 };
 static int menu_append(struct menu_page *page, const char *name, const char *description,
                        enum menu_action action, size_t payload, kshim_menu_role_t role)
@@ -702,6 +830,8 @@ static int menu_append(struct menu_page *page, const char *name, const char *des
         break;
     case MENU_LANG_ZH:
     case MENU_LANG_EN:
+    case MENU_BOOT_DELAY:
+    case MENU_DELAY_SET:
     case MENU_DEVICE_SET:
     case MENU_DEFAULT_SET:
         page->action_labels[row] = kshim_menu_text(KSHIM_TEXT_LANGUAGE_SELECT);
@@ -1168,6 +1298,7 @@ static int menu_fill_settings(struct menu_selection *menu)
     menu->device_info_row = 0;
     menu->settings_row = 0;
     menu->language_entry_row = 0;
+    menu->delay_entry_row = 0;
     menu->device_entry_row = 0;
     menu->default_entry_row = 0;
 
@@ -1318,6 +1449,20 @@ static int menu_fill_settings(struct menu_selection *menu)
                     KSHIM_MENU_ROLE_LANGUAGE))
         return -1;
 #endif
+    menu->delay_entry_row = menu->pages[MENU_PAGE_SETTINGS].count;
+    if (menu->boot_delay_ms == 0U) {
+        if (snprintf(menu->setting_delay_name, sizeof(menu->setting_delay_name), "%s",
+                     kshim_menu_text(KSHIM_TEXT_BOOT_DELAY_OFF_FMT)) < 0)
+            return -1;
+    } else if (snprintf(menu->setting_delay_name, sizeof(menu->setting_delay_name),
+                        kshim_menu_text(KSHIM_TEXT_BOOT_DELAY_FMT),
+                        (unsigned)(menu->boot_delay_ms / 1000U)) < 0) {
+        return -1;
+    }
+    if (menu_append(&menu->pages[MENU_PAGE_SETTINGS], menu->setting_delay_name,
+                    kshim_menu_text(KSHIM_TEXT_BOOT_DELAY_DESC), MENU_BOOT_DELAY, 0,
+                    KSHIM_MENU_ROLE_SETTINGS))
+        return -1;
     if (menu_append(&menu->pages[MENU_PAGE_SETTINGS], KSHIM_MENU_ACTION_BACK,
                     KSHIM_MENU_DESC_BACK_PARENT,
                     MENU_BACK, 0, KSHIM_MENU_ROLE_BACK))
@@ -1386,6 +1531,36 @@ static int menu_fill_settings(struct menu_selection *menu)
     menu->pages[MENU_PAGE_LANGUAGE].initial =
         kshim_menu_get_language() == KSHIM_MENU_LANG_ZH_CN ? 0U : 1U;
 #endif
+    /* Boot-delay submenu: the same interaction as Language, with the
+     * current value pre-selected and 0 worded as "do not auto-boot". */
+    {
+        static const uint32_t delays[] = {0U, 3000U, 5000U, 8000U, 10000U, 15000U, 30000U};
+        struct menu_page *page = &menu->pages[MENU_PAGE_DELAY];
+        size_t current = 0;
+        for (size_t d = 0; d < sizeof(delays) / sizeof(delays[0]); ++d) {
+            if (delays[d] == menu->boot_delay_ms) current = d;
+            if (delays[d] == 0U) {
+                if (snprintf(menu->delay_option_names[d],
+                             sizeof(menu->delay_option_names[d]), "%s",
+                             kshim_menu_text(KSHIM_TEXT_DELAY_OFF)) < 0)
+                    return -1;
+            } else if (snprintf(menu->delay_option_names[d],
+                                sizeof(menu->delay_option_names[d]),
+                                kshim_menu_text(KSHIM_TEXT_DELAY_SECONDS_FMT),
+                                (unsigned)(delays[d] / 1000U)) < 0) {
+                return -1;
+            }
+            if (menu_append(page, menu->delay_option_names[d],
+                            kshim_menu_text(delays[d] == 0U ? KSHIM_TEXT_DELAY_OFF_DESC :
+                                            KSHIM_TEXT_BOOT_DELAY_DESC),
+                            MENU_DELAY_SET, delays[d] / 1000U, KSHIM_MENU_ROLE_SETTINGS))
+                return -1;
+        }
+        if (menu_append(page, KSHIM_MENU_ACTION_BACK, KSHIM_MENU_DESC_BACK_PARENT,
+                        MENU_BACK, 0, KSHIM_MENU_ROLE_BACK))
+            return -1;
+        page->initial = current;
+    }
     return 0;
 }
 
@@ -1567,6 +1742,10 @@ static int menu_activate(struct menu_selection *menu, size_t index,
                 menu->page = MENU_PAGE_SETTINGS;
                 menu->pages[MENU_PAGE_SETTINGS].initial = menu->language_entry_row;
                 break;
+            case MENU_PAGE_DELAY:
+                menu->page = MENU_PAGE_SETTINGS;
+                menu->pages[MENU_PAGE_SETTINGS].initial = menu->delay_entry_row;
+                break;
             default:
                 menu->page = MENU_PAGE_MAIN;
                 break;
@@ -1635,15 +1814,29 @@ static int menu_activate(struct menu_selection *menu, size_t index,
         menu->page = MENU_PAGE_MAIN;
         return 2;
     }
-#if KSHIM_MENU_LANGUAGE_ENABLED
     if (action == MENU_LANGUAGE) {
         menu->page = 2U;
         menu->pages[2].initial = 0U;
         return 2;
     }
+    if (action == MENU_BOOT_DELAY) {
+        menu->page = MENU_PAGE_DELAY;
+        return 2;
+    }
+    if (action == MENU_DELAY_SET) {
+        menu->boot_delay_ms = (uint32_t)page->payloads[index] * 1000U;
+        (void)kshim_nv_store_settings(menu->fdt, (uint8_t)kshim_menu_get_language(),
+                                      (uint8_t)(menu->boot_delay_ms / 1000U));
+        if (menu_fill(menu)) return 2;
+        menu->page = MENU_PAGE_SETTINGS;
+        menu->pages[MENU_PAGE_SETTINGS].initial = menu->delay_entry_row;
+        return 2;
+    }
     if (action == MENU_LANG_ZH || action == MENU_LANG_EN) {
         (void)kshim_menu_set_language(action == MENU_LANG_ZH ?
             KSHIM_MENU_LANG_ZH_CN : KSHIM_MENU_LANG_EN);
+        (void)kshim_nv_store_settings(menu->fdt, (uint8_t)kshim_menu_get_language(),
+                                      (uint8_t)(menu->boot_delay_ms / 1000U));
         /* Rebuilt in the new locale; device/default choices and the resolved
          * default are preserved because they live in menu->boot. */
         if (menu_fill(menu)) return 2;
@@ -1656,7 +1849,6 @@ static int menu_activate(struct menu_selection *menu, size_t index,
         }
         return 2;
     }
-#endif
 #if CONFIG_KSHIM_MENU_ADVANCED_ACTIONS
     if (action == MENU_RECOVERY || action == MENU_FASTBOOT || action == MENU_EDL) {
         enum kshim_qcom_reboot_target target = action == MENU_RECOVERY ?
@@ -1837,7 +2029,15 @@ static int platform_select(uint64_t fdt, const char *const *names,
 #endif
     if (!selected) return -1;
     struct menu_selection menu = {.fdt = (const void *)(uintptr_t)fdt,
-                                  .timeout = timeout_ms, .info = info};
+                                  .timeout = timeout_ms,
+                                  .boot_delay_ms = timeout_ms, .info = info};
+#if defined(CONFIG_KSHIM_CHARGER_MODE) && CONFIG_KSHIM_CHARGER_MODE && \
+    CONFIG_QCOM_KEYS
+    /* menu_build() reports the charger-cable bit; keys must exist first. */
+    (void)build_keys(menu.fdt);
+    if (!ChargerUiRequested && charging_reason_charger())
+        ChargerUiRequested = 1;
+#endif
     if (menu_build(&menu, names, descriptions, roles, info, payload_boards, count, initial,
                    advanced_mask, advanced, language, settings)) return -1;
     /* No unique, board-safe default means no automatic selection at all; the
@@ -1852,9 +2052,18 @@ static int platform_select(uint64_t fdt, const char *const *names,
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
     struct menu_page *page = &menu.pages[menu.page];
     GuiStatus = -1;
-    int status = start_menu(menu.fdt);
+    int status = start_menu(menu.fdt, ChargerUiRequested != 0);
     if (status) GuiStatus = -3;
     else GuiStatus = -2;
+#if defined(CONFIG_KSHIM_CHARGER_MODE) && CONFIG_KSHIM_CHARGER_MODE && \
+    CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
+    if (!status && ChargerUiRequested) {
+        charging_loop();
+        /* No power-key descriptor: fall back to the normal menu. */
+        status = start_menu(menu.fdt, 0);
+        if (status) GuiStatus = -3;
+    }
+#endif
 #if !CONFIG_KSHIM_DEBUG_CONSOLE
     /* True once the initial GUI page was shown and the interactive loop was
      * entered; a later subpage rebuild failure keeps it true. */

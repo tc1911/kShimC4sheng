@@ -51,7 +51,7 @@ endif()
 
 # Output file name
 set(OUTPUT_NAME kShimC)
-set(KSHIMC_VERSION "0.0.2")
+set(KSHIMC_VERSION "0.0.3")
 project(${OUTPUT_NAME} C ASM)
 
 option(KSHIM_STANDALONE "Boot directly as an ARM64 Image instead of an attached manifest runtime" OFF)

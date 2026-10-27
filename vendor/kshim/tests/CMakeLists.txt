@@ -333,7 +333,7 @@ foreach(profile TB323FU ENGLISH)
     endif()
     execute_process(COMMAND ${CMAKE_COMMAND} -E env
         "srctree=${KSHIM_ROOT}/src" "ARCH=aarch64" "HOST_ARCH=${CMAKE_HOST_SYSTEM_PROCESSOR}"
-        "HOST_INFO=host-test" "BUILD_TIME=test" "VERSION=0.0.2"
+        "HOST_INFO=host-test" "BUILD_TIME=test" "VERSION=0.0.3"
         ${Python3_EXECUTABLE} "${KSHIM_ROOT}/tools/configure_kconfig.py"
         --root "${KSHIM_ROOT}" --config "${profile_config}"
         --header "${${profile}_GENERATED}/config.h"

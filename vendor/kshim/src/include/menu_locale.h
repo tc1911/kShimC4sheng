@@ -229,6 +229,15 @@ typedef enum kshim_menu_text_id {
     KSHIM_TEXT_NV_DESC,
     /* Shown after a boot target is chosen, while the payload is handed off. */
     KSHIM_TEXT_BOOTING,
+    /* Settings row for the automatic-boot delay. */
+    KSHIM_TEXT_BOOT_DELAY_LABEL,
+    KSHIM_TEXT_BOOT_DELAY_DESC,
+    KSHIM_TEXT_BOOT_DELAY_FMT,
+    /* Boot-delay submenu: off wording and per-option format strings. */
+    KSHIM_TEXT_DELAY_OFF,
+    KSHIM_TEXT_DELAY_OFF_DESC,
+    KSHIM_TEXT_BOOT_DELAY_OFF_FMT,
+    KSHIM_TEXT_DELAY_SECONDS_FMT,
 
     KSHIM_TEXT_COUNT
 } kshim_menu_text_id;

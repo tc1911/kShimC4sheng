@@ -14,6 +14,8 @@
 #include <initrd.h>
 #include <qcom_dt.h>
 #include <qcom_nv.h>
+#include <menu_locale.h>
+#include <qcom_reboot.h>
 #include <dt_handoff.h>
 #include <dt_simplefb.h>
 #include <tb323fu_ramoops.h>
@@ -248,6 +250,158 @@ static void print_entry_name(const MANIFEST_ENTRY *entry)
     }
 }
 
+static bool bootargs_have_token(const char *args, size_t len, const char *token)
+{
+    size_t token_len = strlen(token);
+    size_t i;
+
+    if (!args || token_len == 0 || len < token_len)
+        return false;
+    for (i = 0; i + token_len <= len; ++i) {
+        if (i > 0 && args[i - 1] != ' ' && args[i - 1] != '\t')
+            continue;
+        if (memcmp(args + i, token, token_len) != 0)
+            continue;
+        if (i + token_len == len || args[i + token_len] == ' ' ||
+            args[i + token_len] == '\t' || args[i + token_len] == '\0')
+            return true;
+    }
+    return false;
+}
+
+/* Android 12+ appends bootconfig to the end of the initramfs:
+ *   <parameters><be32 size><be32 checksum>#BOOTCONFIG\n
+ * The kernel discovers it from /chosen/linux,initrd-end, which ABL already
+ * publishes.  The shim can inspect the same trailer without parsing or
+ * decompressing the ramdisk.  Returns -1 when no valid trailer exists, 0
+ * when it exists without the requested token, and 1 when the token is set. */
+static int bootconfig_mode(const void *fdt)
+{
+    int chosen = fdt_path_offset(fdt, "/chosen");
+    int start_len = 0, end_len = 0;
+    const uint8_t *start_prop, *end_prop;
+    uint64_t start = 0, end = 0;
+    const uint8_t *trailer;
+    uint32_t size;
+
+    if (chosen < 0) return -11;
+    start_prop = fdt_getprop(fdt, chosen, "linux,initrd-start", &start_len);
+    end_prop = fdt_getprop(fdt, chosen, "linux,initrd-end", &end_len);
+    if (!start_prop || !end_prop || start_len < 4 || end_len < 4) return -12;
+    if (start_len >= 8)
+        for (int i = 0; i < 8; ++i) start = (start << 8) | start_prop[i];
+    else
+        for (int i = 0; i < 4; ++i) start = (start << 8) | start_prop[i];
+    if (end_len >= 8)
+        for (int i = 0; i < 8; ++i) end = (end << 8) | end_prop[i];
+    else
+        for (int i = 0; i < 4; ++i) end = (end << 8) | end_prop[i];
+    if (!start || end <= start + 20 || end < 0x20000ULL) return -13;
+    /* Early translation maps RAM, including the initrd; do not add a
+     * conflicting non-cacheable alias just to inspect the trailer. */
+    trailer = (const uint8_t *)(uintptr_t)(end - 12);
+    if (memcmp(trailer, "#BOOTCONFIG\n", 12) != 0) return -14;
+    /* The trailer stores native-endian u32 values; arm64 is little-endian. */
+    size = (uint32_t)trailer[-8] | ((uint32_t)trailer[-7] << 8) |
+           ((uint32_t)trailer[-6] << 16) | ((uint32_t)trailer[-5] << 24);
+    if (size > end - start - 20) return -15;
+    {
+        const char *params = (const char *)(trailer - 8 - size);
+        const char *key = "androidboot.mode";
+        const size_t key_len = strlen(key);
+        for (size_t i = 0; i + key_len <= size; ++i) {
+            const char *p;
+            size_t j;
+            if (i && params[i - 1] != '\n' && params[i - 1] != ' ')
+                continue;
+            if (memcmp(params + i, key, key_len) != 0)
+                continue;
+            j = i + key_len;
+            while (j < size && (params[j] == ' ' || params[j] == '\t')) ++j;
+            if (j >= size || params[j] != '=') continue;
+            ++j;
+            while (j < size && (params[j] == ' ' || params[j] == '\t')) ++j;
+            p = params + j;
+            if (size - j < 7 || memcmp(p, "charger", 7) != 0) continue;
+            j += 7;
+            if (j == size || p[j] == '\n' || p[j] == '\0' || p[j] == ' ')
+                return 1;
+        }
+    }
+    return 0;
+}
+
+
+/* Belt-and-braces fallback: the bootconfig parameter block is plain text at
+ * the end of the initrd.  Scan the last 64 KiB for the exact token so a
+ * trailer layout difference cannot hide it. */
+static bool initrd_has_token(const void *fdt, const char *token)
+{
+    int chosen = fdt_path_offset(fdt, "/chosen");
+    int start_len = 0, end_len = 0;
+    const uint8_t *start_prop, *end_prop;
+    uint64_t start = 0, end = 0;
+    size_t token_len = strlen(token);
+
+    if (chosen < 0) return false;
+    start_prop = fdt_getprop(fdt, chosen, "linux,initrd-start", &start_len);
+    end_prop = fdt_getprop(fdt, chosen, "linux,initrd-end", &end_len);
+    if (!start_prop || !end_prop || start_len < 4 || end_len < 4) return false;
+    for (int i = 0; i < (start_len >= 8 ? 8 : 4); ++i)
+        start = (start << 8) | start_prop[i];
+    for (int i = 0; i < (end_len >= 8 ? 8 : 4); ++i)
+        end = (end << 8) | end_prop[i];
+    if (!start || end <= start + 20) return false;
+    {
+        uint64_t span = end - start;
+        const uint8_t *base = (const uint8_t *)(uintptr_t)start;
+        size_t limit = span > 65536U ? 65536U : (size_t)span;
+        const uint8_t *p = base + span - limit;
+        for (size_t i = 0; i + token_len <= limit; ++i) {
+            if (i && p[i - 1] != '\n' && p[i - 1] != ' ') continue;
+            if (memcmp(p + i, token, token_len) != 0) continue;
+            if (i + token_len == limit || p[i + token_len] == '\n' ||
+                p[i + token_len] == '\0' || p[i + token_len] == ' ')
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool charger_boot_requested(const void *fdt)
+{
+    int chosen = fdt_path_offset(fdt, "/chosen");
+    int len = 0;
+    const char *args;
+
+    if (chosen >= 0) {
+        args = fdt_getprop(fdt, chosen, "bootargs", &len);
+        if (args && len > 0 &&
+            bootargs_have_token(args, (size_t)len, "androidboot.mode=charger"))
+            return true;
+    }
+    if (bootconfig_mode(fdt) == 1) return true;
+    if (initrd_has_token(fdt, "androidboot.mode=charger")) return true;
+#if defined(CONFIG_KSHIM_QCOM_REBOOT) && CONFIG_KSHIM_QCOM_REBOOT
+    /* Android 13+ may carry androidboot.mode in bootconfig rather than in
+     * /chosen/bootargs.  The PMIC restart reason survives in SDAM: 4 is the
+     * charger boot reason on Qualcomm PMICs, 1 is a normal power-key boot. */
+    {
+        struct kshim_qcom_reboot_config config;
+        uint8_t raw = 0;
+        if (kshim_qcom_reboot_parse(fdt, &config) == 0 &&
+            kshim_qcom_reboot_spmi_prepare(&config) == 0 &&
+            kshim_qcom_reboot_spmi_read(&config, &raw) == 0) {
+            unsigned reason = (raw & config.reason_mask) >> config.reason_shift;
+            printf("charger: restart reason %u\n", reason);
+            if (reason == 4U)
+                return true;
+        }
+    }
+#endif
+    return false;
+}
+
 static uint32_t select_image(const MANIFEST_VIEW *view, uint64_t fdt, uint64_t linux_base,
                              const struct device_info *info)
 {
@@ -311,19 +465,29 @@ static uint32_t select_image(const MANIFEST_VIEW *view, uint64_t fdt, uint64_t l
         if (i == view->manifest->header.default_entry) initial = count;
         ++count;
     }
+#if defined(CONFIG_KSHIM_CHARGER_MODE) && CONFIG_KSHIM_CHARGER_MODE
+    if (charger_boot_requested((const void *)(uintptr_t)fdt))
+        kshim_platform_request_charger_ui();
+#endif
+    uint32_t timeout_ms = view->manifest->header.timeout_ms;
 #if defined(CONFIG_KSHIM_BOOT_LAST) && CONFIG_KSHIM_BOOT_LAST
     struct kshim_nv_selection nv;
-    if (kshim_nv_load((const void *)(uintptr_t)fdt, &nv) == 0 &&
-        nv.index < count)
-        initial = nv.index;
+    if (kshim_nv_load((const void *)(uintptr_t)fdt, &nv) == 0) {
+        if (nv.index < count) initial = nv.index;
+        if (nv.has_settings) {
+            (void)kshim_menu_set_language(nv.language == 0 ?
+                KSHIM_MENU_LANG_ZH_CN : KSHIM_MENU_LANG_EN);
+            timeout_ms = (uint32_t)nv.timeout_s * 1000U;
+        }
+    }
 #endif
 #if defined(CONFIG_KSHIM_MENU_SESSION_SETTINGS) && CONFIG_KSHIM_MENU_SESSION_SETTINGS
     if (kshim_platform_select_localized_settings(fdt, names, descriptions, roles, info,
-            payload_boards, count, initial, view->manifest->header.timeout_ms,
+            payload_boards, count, initial, timeout_ms,
             advanced_mask, &selected)) {
 #else
     if (kshim_platform_select_localized_info(fdt, names, descriptions, roles, info, count, initial,
-            view->manifest->header.timeout_ms, advanced_mask, &selected)) {
+            timeout_ms, advanced_mask, &selected)) {
 #endif
         printf("Unsafe UI shutdown; refusing payload handoff\n");
         for (;;) (void)delay(100000);
@@ -729,7 +893,6 @@ int kshim_main(
             if (status == 0) {
                 /* Use the HandoffDtb selected pointer only after successful apply. */
                 selected_device_tree = (uint64_t)(uintptr_t)HandoffDtb;
-
                 if (entry->type == MF_ENTRY_TYPE_LINUX) {
                     /* Only a successful early capture may add a persistent
                      * backend.  bind() is non-transactional, so a failed bind

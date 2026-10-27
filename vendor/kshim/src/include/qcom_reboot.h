@@ -57,5 +57,16 @@ int kshim_qcom_nv_write_cfg(const struct kshim_qcom_reboot_config *config,
                             uint16_t offset, const void *buffer, uint32_t length);
 int kshim_qcom_reboot_spmi_read(const struct kshim_qcom_reboot_config *config,
                               uint8_t *value);
+/* Generic SPMI byte access for PMIC peripherals (ADC, charger).  The
+ * controller is initialised from the same validated hardware DT. */
+int kshim_qcom_spmi_init(const void *hardware_fdt);
+int kshim_qcom_spmi_read_bytes(uint32_t sid, uint16_t address,
+                               void *buffer, uint32_t length);
+int kshim_qcom_spmi_write_bytes(uint32_t sid, uint16_t address,
+                                const void *buffer, uint32_t length);
+/* Some PMIC peripherals deny observer-channel reads; issue the read on the
+ * owned RW channel instead (data lands in RDATA0). */
+int kshim_qcom_spmi_read_rw(uint32_t sid, uint16_t address,
+                            void *buffer, uint32_t length);
 int kshim_qcom_reboot_spmi_write(const struct kshim_qcom_reboot_config *config,
                                uint8_t value);

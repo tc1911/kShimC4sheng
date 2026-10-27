@@ -22,6 +22,11 @@
 #define QCOM_PON_KPDPWR_N_SET        (1U << 0)
 #define QCOM_PON_RESIN_N_SET         (1U << 1)
 #define QCOM_PON_CBLPWR_N_SET        (1U << 2)
+/* PON_REASON1: latched power-on trigger bits. */
+#define QCOM_PON_REASON1_OFFSET      0x08
+#define QCOM_PON_REASON_DC_CHG       (1U << 3)
+#define QCOM_PON_REASON_USB_CHG      (1U << 4)
+#define QCOM_PON_REASON_CBL_CHG      (1U << 6)
 #define QCOM_PON_RESIN_BARK_N_SET    (1U << 4)
 #define QCOM_PON_KPDPWR_RESIN_BARK_N_SET (1U << 5)
 #define QCOM_PON_GEN3_RESIN_N_SET    (1U << 6)
