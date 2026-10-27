@@ -13,17 +13,20 @@
 首次启动默认 8 秒后进 Android，之后会记住上次启动的系统；音量键选择、
 电源键确认（sheng 的触屏驱动未适配，与两代 Y700 一样只用按键）。
 
-> 状态：**真机双系统已跑通（2026-10-24，sheng / A 槽，kShimC 0.0.2）**。
+> 状态：**真机双系统已跑通（2026-10-27，sheng / A 槽，kShimC 0.0.3）**。
 > Android 原厂与 Debian forky/KDE 都能从菜单正常引导。
-> 当前 `boot_a` = `out/boot_a_booting.img`，90,005,504 B，sha256
-> `79bc3e156af88c9eb734302e99f5ab0031acfe0d5af1a2efe2447c2f575031d3`。
+> 当前 `boot_a` = `out/boot_a_v003.img`，90,005,504 B，sha256
+> `e18dd5621c24a9dd3bef8eeb1e39c203c0913d29dcd11a004e39a010964e704d`。
 > `linux` 分区 128 GiB（`PARTLABEL=linux`），`userdata` 104.4 GiB。
 > 菜单 7 项、音量键/电源键，会记住上次启动的系统（PMIC SDAM）；
-> 选中后底部显示“正在启动，请稍候”。设备信息页显示上次启动记录，
-> 设置页只保留语言切换，高级启动顺序为 Fastboot → Recovery → EDL。
+> 选中后底部显示“正在启动，请稍候”。设置页支持语言和开机延迟，
+> 两项都会永久保留；高级启动顺序为 Fastboot → Recovery → EDL。
+> 关机插电会进入内置充电界面，长按电源键回菜单。
 > 备份（原厂 boot/GPT/全部分区）在 `/home/tc191/6spBackup/rom/`；
 > 原厂 `boot_a` 回滚：`fastboot flash boot_a stock/boot_a-stock.img`。
 > 详细步骤见 `docs/sheng-debian-dual-boot.md`。
+
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 已验证 / sheng 适配要点
 
@@ -39,9 +42,11 @@
   内存 7888 MiB（`/memory` 里有一个 size=0 的占位 bank，已跳过）。
 - 设备信息识别为 `Xiaomi Pad 6S Pro (sheng / SM8550)`；0.0.2 起设备固定为
   sheng，设置页不再显示设备选择。
-- 上次启动：`CONFIG_KSHIM_BOOT_LAST` 把选中条目写进 PMIC SDAM
-  `0x8400/0x8500` 的 `0x50/0x60`（`KSET` 记录 + CRC32，双份回退）。没有记录或
-  记录失效时回退 manifest 默认（Android），不会阻止手动选择。
+- 上次启动/设置：`CONFIG_KSHIM_BOOT_LAST` 把选中条目、语言和开机延迟写进
+  PMIC SDAM `0x8400/0x8500` 的 `0x50/0x80`（`KSET` v2 记录 + CRC32，双份回退）。
+  没有记录或记录失效时回退 manifest 默认（Android），不会阻止手动选择。
+- 充电模式：识别 `androidboot.mode=charger` 后跳过菜单，显示内置
+  `CHARGER CONNECTED` 界面，长按电源键 2 秒回菜单；不依赖发行版服务。
 - 启动提示：确认条目后先渲染“正在启动，请稍候”再交接内核，避免停在菜单
   画面让人误以为卡死。
 
