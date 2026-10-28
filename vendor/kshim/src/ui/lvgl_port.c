@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <backdrop.h>
 #include <lvgl.h>
@@ -64,11 +65,14 @@ static lv_obj_t *mList;
 static lv_obj_t *mBootButton;
 static lv_obj_t *mStatus;
 static lv_obj_t *mTitle;
+static lv_obj_t *mSubtitle;
 static lv_obj_t *mDetail;
 static lv_obj_t *mNotice;
 static lv_obj_t *mHelp;
 static lv_obj_t *mCredit;
 static lv_obj_t *mLanguage;
+static lv_obj_t *mSection;
+static lv_obj_t *mTags;
 static kshim_lvgl_t *mContext;
 static uint32_t mKey;
 static uint32_t mLastTextureUpdate;
@@ -267,6 +271,34 @@ static void KshimShowEntry(size_t Index)
     (void)KshimDesignRelayout();
   }
   if (mStatus != NULL) lv_label_set_text(mStatus, mContext->Entries[Index]);
+  if (mTags != NULL) {
+    const char *Tags = "";
+    switch (mContext->Roles[Index]) {
+      case KSHIM_MENU_ROLE_BASE:
+      case KSHIM_MENU_ROLE_ANDROID: Tags = kshim_menu_text(KSHIM_TEXT_TAGS_ANDROID); break;
+      case KSHIM_MENU_ROLE_INTERNAL: Tags = kshim_menu_text(KSHIM_TEXT_TAGS_LINUX); break;
+      case KSHIM_MENU_ROLE_RECOVERY:
+      case KSHIM_MENU_ROLE_FASTBOOT:
+      case KSHIM_MENU_ROLE_EDL:
+      case KSHIM_MENU_ROLE_ADVANCED: Tags = kshim_menu_text(KSHIM_TEXT_TAGS_ADVANCED); break;
+      case KSHIM_MENU_ROLE_SETTINGS:
+      case KSHIM_MENU_ROLE_LANGUAGE: Tags = kshim_menu_text(KSHIM_TEXT_TAGS_SETTINGS); break;
+      case KSHIM_MENU_ROLE_DEVICE_INFO:
+      case KSHIM_MENU_ROLE_DEVICE: Tags = kshim_menu_text(KSHIM_TEXT_TAGS_DEVICE); break;
+      case KSHIM_MENU_ROLE_UNKNOWN:
+        if (mContext->Entries[Index] != NULL && strstr(mContext->Entries[Index], "Linux") != NULL)
+          Tags = kshim_menu_text(KSHIM_TEXT_TAGS_LINUX);
+        break;
+      default: break;
+    }
+    lv_label_set_text(mTags, Tags);
+    if (Tags[0] == '\0' || mInfoState) lv_obj_add_flag(mTags, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(mTags, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (mSection != NULL) {
+    if (mInfoState) lv_obj_add_flag(mSection, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(mSection, LV_OBJ_FLAG_HIDDEN);
+  }
   if (mDetail != NULL) {
     const char *Description = mContext->Descriptions[Index];
     if (Description == NULL || Description[0] == '\0')
@@ -450,10 +482,13 @@ static void KshimCreateFonts(uint32_t ShortEdge)
     DesignSizes[2] = kshim_design_max(10, kshim_design_px(mMenuDesign.status_size, Scale));
     Size = DesignSizes;
   }
+  /* A 48 px glyph is ~9 KiB in the 512 KiB LVGL heap. Keep the title cache
+   * small so the atlas page and the device-info summary cannot exhaust it. */
+  static const uint32_t CacheCounts[3] = {12U, 20U, 18U};
   for (unsigned Index = 0; Index < 3U; Index++) {
     mFonts[Index] = mFontData == NULL ? NULL :
         lv_tiny_ttf_create_data_ex(mFontData, kshim_ui_font_size(), Size[Index],
-            LV_FONT_KERNING_NONE, Index == 0U ? 32U : LV_TINY_TTF_CACHE_GLYPH_CNT);
+            LV_FONT_KERNING_NONE, CacheCounts[Index]);
   }
   /* The STAR summary body on a short-edge <=1080 panel needs a smaller face;
    * slot three is created only there, sharing the body glyph cache, and stays
@@ -531,6 +566,13 @@ static int KshimBuildChrome(void)
   lv_obj_set_style_text_color(mTitle, KshimTextColor(), 0);
   if (mMenuStyle.Modern != 0U) lv_label_set_long_mode(mTitle, LV_LABEL_LONG_DOT);
 
+  mSubtitle = lv_label_create(mPanel);
+  if (mSubtitle == NULL) return -1;
+  lv_label_set_text_static(mSubtitle, "Xiaomi Pad 6S Pro \u00b7 sheng \u00b7 v0.0.4");
+  lv_obj_set_style_text_font(mSubtitle, mStatusFont, 0);
+  lv_obj_set_style_text_color(mSubtitle, KshimMutedColor(), 0);
+  lv_label_set_long_mode(mSubtitle, LV_LABEL_LONG_DOT);
+
   mStatus = lv_label_create(mPanel);
   if (mStatus == NULL) return -1;
   lv_label_set_text(mStatus, KSHIM_MENU_TEXT_STATUS);
@@ -598,9 +640,27 @@ static int KshimBuildChrome(void)
   if (mMenuDesign.kind == KSHIM_DESIGN_STAR_CHART) {
     mCredit = lv_label_create(mPanel);
     mLanguage = lv_label_create(mPanel);
-    if (mCredit == NULL || mLanguage == NULL) return -1;
+    mSection = lv_label_create(mPanel);
+    mTags = lv_label_create(mPanel);
+    if (mCredit == NULL || mLanguage == NULL || mSection == NULL || mTags == NULL) return -1;
     lv_label_set_text(mCredit, KSHIM_MENU_TEXT_CREDIT);
     lv_label_set_text(mLanguage, KSHIM_MENU_TEXT_LANGUAGE_STATE);
+    lv_label_set_text(mSection, kshim_menu_text(KSHIM_TEXT_SECTION));
+    lv_label_set_text(mTags, "");
+    lv_obj_set_style_text_font(mSection, mRowFont, 0);
+    lv_obj_set_style_text_font(mTags, mRowFont, 0);
+    lv_obj_set_style_text_color(mSection, KshimMutedColor(), 0);
+    lv_obj_set_style_text_color(mTags, lv_color_hex(mMenuStyle.FocusBorder), 0);
+    lv_obj_set_style_text_letter_space(mSection, 2, 0);
+    lv_obj_set_style_bg_color(mTags, lv_color_hex(mMenuStyle.FocusBorder), 0);
+    lv_obj_set_style_bg_opa(mTags, LV_OPA_20, 0);
+    lv_obj_set_style_radius(mTags, 22, 0);
+    lv_obj_set_style_pad_hor(mTags, 18, 0);
+    lv_obj_set_style_pad_ver(mTags, 8, 0);
+    lv_label_set_long_mode(mSection, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(mTags, LV_LABEL_LONG_DOT);
+    lv_obj_remove_flag(mSection, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(mTags, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_text_font(mCredit, mStatusFont, 0);
     lv_obj_set_style_text_font(mLanguage, mStatusFont, 0);
     lv_obj_set_style_text_color(mCredit, KshimMutedColor(), 0);
@@ -670,6 +730,8 @@ int kshim_lvgl_init(kshim_lvgl_t *Context, kshim_framebuffer_t *Framebuffer, Qco
   mHelp = NULL;
   mCredit = NULL;
   mLanguage = NULL;
+  mSection = NULL;
+  mTags = NULL;
   mColumns = 1U;
   mSplit = 0U;
   mRibbon = 0U;
@@ -837,6 +899,7 @@ int kshim_lvgl_set_entries_described(kshim_lvgl_t *Context, const char *const *N
     if (mHelp != NULL) lv_label_set_text(mHelp, KSHIM_MENU_TEXT_HELP);
     if (mCredit != NULL) lv_label_set_text(mCredit, KSHIM_MENU_TEXT_CREDIT);
     if (mLanguage != NULL) lv_label_set_text(mLanguage, KSHIM_MENU_TEXT_LANGUAGE_STATE);
+    if (mSection != NULL) lv_label_set_text(mSection, kshim_menu_text(KSHIM_TEXT_SECTION));
 #endif
   }
   return Result;
@@ -971,6 +1034,8 @@ void kshim_lvgl_deinit(kshim_lvgl_t *Context)
   mHelp = NULL;
   mCredit = NULL;
   mLanguage = NULL;
+  mSection = NULL;
+  mTags = NULL;
   mColumns = 1U;
   mSplit = 0U;
   mRibbon = 0U;

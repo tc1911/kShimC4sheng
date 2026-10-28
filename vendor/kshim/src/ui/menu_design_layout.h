@@ -11,7 +11,7 @@
 
 typedef struct { int32_t x,y,w,h; } kshim_design_rect_t;
 typedef struct {
-    kshim_design_rect_t panel,title,status,list,boot,detail,notice,footer,credit,language,illustration;
+    kshim_design_rect_t panel,title,status,list,boot,detail,notice,footer,credit,language,illustration,section,tags;
     kshim_design_rect_t items[KSHIM_DESIGN_MAX_ENTRIES];
     int32_t content_width,content_height,row_height,icon_size,gutter,gap;
     uint16_t scale_q8;
@@ -62,7 +62,7 @@ static inline int kshim_design_star_chart(const kshim_menu_design_t *d,
     int32_t contentw=g->panel.w-2*p;
     int32_t section=kshim_design_px(24U,q);
     int32_t feather=kshim_design_px(80U,q);
-    int32_t titleh=kshim_design_max(kshim_design_px(70U,q),
+    int32_t titleh=kshim_design_max(kshim_design_px(96U,q),
         kshim_design_px(d->title_size,q)*3/2+4);
     g->title=(kshim_design_rect_t){p+feather,p,contentw*70/100-feather,titleh};
     g->language=(kshim_design_rect_t){p+contentw*76/100,p+kshim_design_px(10U,q),
@@ -94,14 +94,17 @@ static inline int kshim_design_star_chart(const kshim_menu_design_t *d,
     g->content_width=g->list.w;
     g->content_height=kshim_design_max(g->list.h,lastend);
     int32_t rx=p+contentw*52/100, rw=contentw*48/100;
-    int32_t maxheight=kshim_design_max(0,listh-kshim_design_px(320U,q));
-    int32_t illh=kshim_design_min(kshim_design_min(g->panel.h*30/100,kshim_design_px(300U,q)),maxheight);
-    g->illustration=(kshim_design_rect_t){rx,liststart,rw,illh};
-    int32_t statush=kshim_design_px(54U,q);
-    int32_t statusy=liststart+illh+kshim_design_px(18U,q);
+    /* The atlas page: a small overline, a full-size entry title, body copy and
+     * one brass tag line. No large illustration competes with the text. */
+    g->illustration=(kshim_design_rect_t){0};
+    g->section=(kshim_design_rect_t){rx,liststart,rw,kshim_design_px(32U,q)};
+    int32_t statusy=liststart+kshim_design_px(42U,q);
+    int32_t statush=kshim_design_px(70U,q);
     g->status=(kshim_design_rect_t){rx,statusy,rw,statush};
-    g->detail=(kshim_design_rect_t){rx,statusy+statush+kshim_design_px(14U,q),rw,
-        kshim_design_max(0,kshim_design_px(130U,q))};
+    int32_t detailh=kshim_design_px(180U,q);
+    g->detail=(kshim_design_rect_t){rx,statusy+statush+kshim_design_px(10U,q),rw,detailh};
+    g->tags=(kshim_design_rect_t){rx,g->detail.y+detailh+kshim_design_px(10U,q),rw,
+        kshim_design_px(40U,q)};
     int32_t booth=kshim_design_px(68U,q);
     int32_t bootw=kshim_design_min(kshim_design_px(240U,q),rw);
     int32_t booty=g->list.y+g->list.h-booth;

@@ -238,6 +238,13 @@ typedef enum kshim_menu_text_id {
     KSHIM_TEXT_DELAY_OFF_DESC,
     KSHIM_TEXT_BOOT_DELAY_OFF_FMT,
     KSHIM_TEXT_DELAY_SECONDS_FMT,
+    /* STAR_CHART atlas page: overline and one-line tag strip. */
+    KSHIM_TEXT_SECTION,
+    KSHIM_TEXT_TAGS_ANDROID,
+    KSHIM_TEXT_TAGS_LINUX,
+    KSHIM_TEXT_TAGS_ADVANCED,
+    KSHIM_TEXT_TAGS_SETTINGS,
+    KSHIM_TEXT_TAGS_DEVICE,
 
     KSHIM_TEXT_COUNT
 } kshim_menu_text_id;

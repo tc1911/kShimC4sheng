@@ -72,7 +72,7 @@ scripts/make-boot.sh \
 首版产物：89,997,312 B，sha256
 `7a20e585ecaccd8f03c1adb9f75ade44c3c030c57470ac37961cbba53287b449`。
 
-当前（0.0.3，带上次启动、语言/延迟和充电模式）用同一条命令重新打包：
+当前（0.0.4，带上次启动、语言/延迟和充电模式）用同一条命令重新打包：
 
 ```bash
 scripts/make-boot.sh \
@@ -97,7 +97,7 @@ fastboot flash boot_a out/boot_a_debian.img
 首次启动默认 Android、8 秒超时；选 Linux 后走内置 Debian Image + DTB，
 根分区靠 `root=PARTLABEL=linux`，没有 initrd。
 
-## 上次启动、设置与启动提示（0.0.3）
+## 上次启动、设置与启动提示（0.0.3+）
 
 - 选中并成功交接后，kShimC 把条目索引、语言和开机延迟写进 PMIC SDAM：
   优先 `0x8400`，备份 `0x8500`，偏移 `0x50/0x80`，记录含 `KSET` v2 magic 与 CRC32。

@@ -13,7 +13,7 @@
 首次启动默认 8 秒后进 Android，之后会记住上次启动的系统；音量键选择、
 电源键确认（sheng 的触屏驱动未适配，与两代 Y700 一样只用按键）。
 
-> 状态：**真机双系统已跑通（2026-10-27，sheng / A 槽，kShimC 0.0.3）**。
+> 状态：**真机双系统已跑通（2026-10-27，sheng / A 槽，kShimC 0.0.4）**。
 > Android 原厂与 Debian forky/KDE 都能从菜单正常引导。
 > 当前 `boot_a` = `out/boot_a_v003.img`，90,005,504 B，sha256
 > `e18dd5621c24a9dd3bef8eeb1e39c203c0913d29dcd11a004e39a010964e704d`。

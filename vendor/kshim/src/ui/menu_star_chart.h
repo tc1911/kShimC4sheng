@@ -290,7 +290,7 @@ static inline void KshimStarPanelDraw(lv_event_t *event) {
     if(!panel_obj) return;
     lv_obj_get_coords(panel_obj,&a);
     if(a.x2<a.x1 || a.y2<a.y1) return;
-    ink=mMenuStyle.Text; gold=mMenuStyle.FocusBorder; muted=mMenuStyle.Muted;
+    ink=mMenuStyle.Text; gold=mMenuStyle.FocusBorder; muted=mMenuStyle.FocusBorder;
     ins=KshimDesignPx(6); stroke=KshimStarStroke();
     panel.x=a.x1; panel.y=a.y1; panel.w=a.x2-a.x1+1; panel.h=a.y2-a.y1+1;
     title=KshimStarShift(mDesignGeometry.title,panel.x,panel.y);
@@ -301,38 +301,6 @@ static inline void KshimStarPanelDraw(lv_event_t *event) {
     box=KshimStarInset(panel,ins);
     if(box.w<1 || box.h<1) return;
 
-    /* Feather in the reserved space immediately left of the title. */
-    avail=title.x-box.x-KshimDesignPx(4);
-    fw=KshimDesignPx(50);
-    if(fw>avail) fw=avail;
-    if(fw>=KshimDesignPx(14)) {
-        fr.x=title.x-fw-KshimDesignPx(4);
-        fr.y=title.y-KshimDesignPx(2);
-        fr.w=fw;
-        fr.h=(title.h>0?title.h:KshimDesignPx(18))+KshimDesignPx(4);
-        if(fr.y<box.y) fr.y=box.y;
-        if(fr.y+fr.h>box.y+box.h) fr.h=box.y+box.h-fr.y;
-        if(fr.h>=KshimDesignPx(14) && fr.x>=box.x && fr.x+fr.w<=title.x)
-            KshimStarFeather(event,gold,ink,opa,fr,stroke);
-    }
-    /* Two uneven short gold underlines just below the title, constrained by the list top. */
-    top=title.y+(title.h>0?title.h:KshimDesignPx(18))+KshimDesignPx(3);
-    bottom=box.y+box.h;
-    if(mDesignGeometry.list.h>0 && panel.y+mDesignGeometry.list.y-KshimDesignPx(2)<bottom)
-        bottom=panel.y+mDesignGeometry.list.y-KshimDesignPx(2);
-    x0=title.x<box.x?box.x:title.x;
-    if(top+KshimDesignPx(4)+stroke<bottom && box.x+box.w-x0>KshimDesignPx(60)) {
-        int32_t room=box.x+box.w-x0, l1, l2, ox=KshimDesignPx(10);
-        l1=KshimDesignPx(150); if(l1>room) l1=room;
-        if(title.w>0 && l1>title.w) l1=title.w;
-        l2=KshimDesignPx(104); if(l2>l1-KshimDesignPx(6)) l2=l1-KshimDesignPx(6);
-        if(l2<1) l2=1;
-        if(ox+l2>room) ox=room-l2;
-        if(ox<0) ox=0;
-        KshimSymbolLine(event,gold,opa,x0,top,x0+l1,top,stroke+1,true);
-        KshimSymbolLine(event,gold,opa,x0+ox,top+KshimDesignPx(4),
-            x0+ox+l2,top+KshimDesignPx(4),stroke,true);
-    }
     /* Illustration: a fixed 12:5 canvas centred inside the art rect (letterboxed,
      * never stretched), holding a tilted tablet on its own box, miniature
      * feather, orbiting oval, stars and moon. */
@@ -348,52 +316,21 @@ static inline void KshimStarPanelDraw(lv_event_t *event) {
         tb.y=cvs.y+cvs.h*52/100-tb.h/2;
         KshimStarPoly(event,muted,opa,tb,0,tablet,4,stroke,true);
         KshimStarPoly(event,muted,opa,tb,0,inner,4,stroke,true);
-        KshimStarPoly(event,ink,opa,cvs,0,orbit,32,stroke,true);
-        KshimStarPoly(event,muted,opa,cvs,0,orbit2,7,1,false);
+        KshimStarPoly(event,gold,opa,cvs,0,orbit,32,stroke,true);
+        KshimStarPoly(event,gold,opa,cvs,0,orbit2,7,1,false);
         /* Feather subrect inside the tablet keeps the feather's own aspect. */
         fea=KshimStarAspect(KshimStarSub(tb,300,180,400,640),680,955);
         KshimStarFeather(event,gold,ink,opa,fea,stroke);
-        KshimStarTip(event,ink,opa,KshimStarMapX(cvs,110),KshimStarMapY(cvs,180),KshimStarMapR(cvs,45),stroke);
+        KshimStarTip(event,gold,opa,KshimStarMapX(cvs,110),KshimStarMapY(cvs,180),KshimStarMapR(cvs,45),stroke);
         KshimStarTip(event,gold,opa,KshimStarMapX(cvs,750),KshimStarMapY(cvs,140),KshimStarMapR(cvs,32),stroke);
-        KshimStarTip(event,muted,opa,KshimStarMapX(cvs,120),KshimStarMapY(cvs,820),KshimStarMapR(cvs,38),stroke);
+        KshimStarTip(event,gold,opa,KshimStarMapX(cvs,120),KshimStarMapY(cvs,820),KshimStarMapR(cvs,38),stroke);
         KshimStarTip(event,gold,opa,KshimStarMapX(cvs,900),KshimStarMapY(cvs,760),KshimStarMapR(cvs,40),stroke);
         {
             int32_t mx=KshimStarMapX(cvs,850), my=KshimStarMapY(cvs,330), mr=KshimStarMapR(cvs,70);
-            KshimStarCircle(event,muted,opa,mx,my,mr,stroke);
-            KshimSymbolLine(event,muted,opa,mx-mr/3,my-mr/4,mx-mr/8,my-mr/3,stroke,true);
-            KshimSymbolLine(event,muted,opa,mx+mr/5,my+mr/6,mx+mr/2,my+mr/12,stroke,true);
-            KshimSymbolLine(event,muted,opa,mx-mr/2,my+mr/3,mx-mr/4,my+mr/2,stroke,true);
-        }
-    }
-    /* Two quiet local mountain clusters in the band above the footer: a thin
-     * baseline plus real peaks, kept clear of the list's last row, the boot
-     * button and any detail text. */
-    {
-        int32_t lbot,bbot,cbot,ctop,cw,ch,availh;
-        kshim_design_rect_t lcl,rcl;
-        lbot=panel.y+mDesignGeometry.list.y+mDesignGeometry.list.h;
-        bbot=panel.y+mDesignGeometry.boot.y+mDesignGeometry.boot.h;
-        cbot=box.y+box.h;
-        ctop=box.y;
-        if(footer.h>0 && footer.y<cbot) cbot=footer.y;
-        if(credit.h>0 && credit.y<cbot) cbot=credit.y;
-        if(art.h>0 && art.y+art.h>ctop) ctop=art.y+art.h;
-        if(detail.h>0 && detail.y+detail.h>ctop) ctop=detail.y+detail.h;
-        if(mDesignGeometry.list.h>0 && lbot>ctop) ctop=lbot;
-        if(mDesignGeometry.boot.h>0 && bbot>ctop) ctop=bbot;
-        ctop+=KshimDesignPx(2);
-        cbot-=KshimDesignPx(3);
-        availh=cbot-ctop;
-        ch=KshimDesignPx(52); if(ch>availh) ch=availh;
-        if(ch>KshimDesignPx(60)) ch=KshimDesignPx(60);
-        cw=KshimDesignPx(180);
-        if(cw>box.w/3) cw=box.w/3;
-        if(ch>=KshimDesignPx(14) && cw>=KshimDesignPx(40)) {
-            int32_t pad=KshimDesignPx(8);
-            lcl.x=box.x+pad; lcl.y=cbot-ch; lcl.w=cw; lcl.h=ch;
-            rcl.x=box.x+box.w-pad-cw; rcl.y=cbot-ch; rcl.w=cw; rcl.h=ch;
-            KshimStarRange(event,muted,opa,lcl,stroke,ridgeL,9,snowL,6);
-            KshimStarRange(event,muted,opa,rcl,stroke,ridgeR,9,snowR,4);
+            KshimStarCircle(event,gold,opa,mx,my,mr,stroke);
+            KshimSymbolLine(event,gold,opa,mx-mr/3,my-mr/4,mx-mr/8,my-mr/3,stroke,true);
+            KshimSymbolLine(event,gold,opa,mx+mr/5,my+mr/6,mx+mr/2,my+mr/12,stroke,true);
+            KshimSymbolLine(event,gold,opa,mx-mr/2,my+mr/3,mx-mr/4,my+mr/2,stroke,true);
         }
     }
 }

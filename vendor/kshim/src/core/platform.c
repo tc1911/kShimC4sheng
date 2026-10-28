@@ -28,6 +28,7 @@
 #endif
 #include <qcom_nv.h>
 #include "../ui/charging_glyphs.h"
+#include "../ui/charging_text.h"
 
 /* With the runtime language switch on, every user-visible string resolves
  * through the locale table so the live selection flips platform text too; the
@@ -652,18 +653,52 @@ static int charging_reason_charger(void)
                      QCOM_PON_REASON_CBL_CHG)) != 0;
 }
 
+static void charging_bitmap(int32_t x, int32_t y, int32_t w, int32_t h,
+                            const uint8_t *bits)
+{
+    int32_t stride = (w + 7) / 8;
+    for (int32_t r = 0; r < h; ++r) {
+        const uint8_t *row = bits + (size_t)r * (size_t)stride;
+        int32_t c = 0;
+        while (c < w) {
+            while (c < w && !(row[c / 8] & (0x80U >> (c % 8)))) ++c;
+            int32_t run = c;
+            while (c < w && (row[c / 8] & (0x80U >> (c % 8)))) ++c;
+            if (c > run)
+                (void)kshim_fb_fill_rect(&Framebuffer,
+                    x + run, y + r, (uint32_t)(c - run), 1, true);
+        }
+    }
+}
+
 static void charging_paint(void)
 {
     int32_t w = (int32_t)Framebuffer.width;
     int32_t h = (int32_t)Framebuffer.height;
-    int32_t y = h / 2 - (CHARGING_GLYPH_H + 20);
-    int32_t x1 = (w - charging_text_width(ChargingLine1)) / 2;
-    int32_t x2 = (w - charging_text_width(ChargingLine2)) / 2;
+    int zh = kshim_menu_get_language() == KSHIM_MENU_LANG_ZH_CN;
+    int32_t h1 = zh ? (int32_t)ChargingZhLine1_H : (int32_t)CHARGING_GLYPH_H;
+    int32_t h2 = zh ? (int32_t)ChargingZhLine2_H : (int32_t)CHARGING_GLYPH_H;
+    int32_t gap = 30, vgap = 24;
+    int32_t total = h1 + gap + h2 + vgap + (int32_t)ChargingVersion_H;
+    int32_t y = (h - total) / 2;
 
     (void)kshim_fb_set_colors(&Framebuffer, UINT32_MAX, 0);
     (void)kshim_fb_clear(&Framebuffer);
-    charging_text(x1, y, ChargingLine1);
-    charging_text(x2, y + CHARGING_GLYPH_H + 30, ChargingLine2);
+    if (zh) {
+        charging_bitmap((w - (int32_t)ChargingZhLine1_W) / 2, y,
+                        (int32_t)ChargingZhLine1_W, (int32_t)ChargingZhLine1_H,
+                        ChargingZhLine1);
+        charging_bitmap((w - (int32_t)ChargingZhLine2_W) / 2, y + h1 + gap,
+                        (int32_t)ChargingZhLine2_W, (int32_t)ChargingZhLine2_H,
+                        ChargingZhLine2);
+    } else {
+        charging_text((w - charging_text_width(ChargingLine1)) / 2, y, ChargingLine1);
+        charging_text((w - charging_text_width(ChargingLine2)) / 2, y + h1 + gap,
+                      ChargingLine2);
+    }
+    charging_bitmap((w - (int32_t)ChargingVersion_W) / 2, y + h1 + gap + h2 + vgap,
+                    (int32_t)ChargingVersion_W, (int32_t)ChargingVersion_H,
+                    ChargingVersion);
 }
 
 static void charging_loop(void)

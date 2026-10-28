@@ -235,6 +235,8 @@ static int KshimDesignRelayout(void) {
      * exactly as laid out. */
     if(mMenuDesign.kind==KSHIM_DESIGN_STAR_CHART && !mDesignGeometry.compact && mInfoState) {
         mDesignGeometry.illustration=(kshim_design_rect_t){0};
+        mDesignGeometry.section=(kshim_design_rect_t){0};
+        mDesignGeometry.tags=(kshim_design_rect_t){0};
         mDesignGeometry.notice=(kshim_design_rect_t){0};
         mDesignGeometry.status.y=mDesignGeometry.list.y;
         mDesignGeometry.detail.y=mDesignGeometry.status.y+mDesignGeometry.status.h+KshimDesignPx(14);
@@ -250,6 +252,13 @@ static int KshimDesignRelayout(void) {
         mMenuDesign.kind==KSHIM_DESIGN_CLASSIC || mMenuDesign.kind==KSHIM_DESIGN_TERMINAL || mMenuDesign.kind==KSHIM_DESIGN_GLASS?1:0;
     lv_obj_set_style_outline_width(mPanel,KshimDesignStroke((uint32_t)panel_outline),0);
     KshimDesignPlace(mTitle,mDesignGeometry.title);
+    if(mSubtitle) {
+        if(mDesignGeometry.compact) lv_obj_add_flag(mSubtitle,LV_OBJ_FLAG_HIDDEN);
+        else KshimDesignPlace(mSubtitle,(kshim_design_rect_t){
+            mDesignGeometry.title.x,
+            mDesignGeometry.title.y+mDesignGeometry.title.h-KshimDesignPx(30),
+            mDesignGeometry.title.w,KshimDesignPx(30)});
+    }
     KshimDesignPlace(mStatus,mDesignGeometry.status);
     KshimDesignPlace(mList,mDesignGeometry.list);
     KshimDesignPlace(mBootButton,mDesignGeometry.boot);
@@ -280,11 +289,23 @@ static int KshimDesignRelayout(void) {
     lv_obj_set_style_radius(mBootButton,mDesignGeometry.compact?0:radius,0);
     if(mDetail) KshimDesignPlace(mDetail,mDesignGeometry.split?mDesignGeometry.detail:(kshim_design_rect_t){0});
     if(mMenuDesign.kind==KSHIM_DESIGN_STAR_CHART) {
-        lv_obj_set_style_text_font(mStatus,mRowFont,0);
-        lv_obj_set_style_text_color(mStatus,lv_color_hex(mMenuStyle.FocusBorder),0);
+        lv_obj_set_style_text_font(mStatus,mInfoState?mRowFont:mTitleFont,0);
+        lv_obj_set_style_text_color(mStatus,lv_color_hex(mMenuStyle.Text),0);
         if(mDetail) {
-            lv_obj_set_style_text_font(mDetail,mInfoState?mInfoFont:mStatusFont,0);
-            lv_obj_set_style_text_color(mDetail,lv_color_hex(mMenuStyle.Text),0);
+            lv_obj_set_style_text_font(mDetail,mInfoState?mInfoFont:mRowFont,0);
+            lv_obj_set_style_text_color(mDetail,lv_color_hex(mInfoState?mMenuStyle.Muted:mMenuStyle.FocusBorder),0);
+        }
+        if(mSection) {
+            KshimDesignPlace(mSection,mDesignGeometry.section);
+            lv_obj_set_style_text_font(mSection,mRowFont,0);
+        }
+        if(mTags) {
+            if(mDesignGeometry.tags.w<1) lv_obj_add_flag(mTags,LV_OBJ_FLAG_HIDDEN);
+            else {
+                lv_obj_set_pos(mTags,mDesignGeometry.tags.x,mDesignGeometry.tags.y);
+                lv_obj_set_height(mTags,mDesignGeometry.tags.h);
+                lv_obj_set_width(mTags,LV_SIZE_CONTENT);
+            }
         }
         if(mCredit) lv_obj_set_style_text_font(mCredit,mStatusFont,0);
         if(mLanguage) lv_obj_set_style_text_font(mLanguage,mStatusFont,0);
