@@ -28,6 +28,16 @@
 
 变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
+## 界面
+
+| 主菜单 | 设置 | 开机延迟 |
+| --- | --- | --- |
+| ![主菜单](docs/images/menu-main.png) | ![设置](docs/images/menu-settings.png) | ![开机延迟](docs/images/menu-boot-delay.png) |
+
+| 充电模式 | 启动流程 |
+| --- | --- |
+| ![充电模式](docs/images/menu-charger.png) | ![启动流程](docs/images/dual-boot-flow.png) |
+
 ## 已验证 / sheng 适配要点
 
 - 菜单：3048×2032 横屏、STAR_CHART 双栏；只列 Android / Linux / 高级启动 /
