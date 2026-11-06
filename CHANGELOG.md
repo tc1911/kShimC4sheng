@@ -4,6 +4,13 @@
 
 ## 0.0.5 — 2026-11-07
 
+0.0.5 is the first release built around the Atlas UI. The old single-column
+menu is replaced by six focused pages — Boot environment, Advanced boot,
+Settings, Language, Boot delay and Device info — with a fixed left navigation,
+line icons and a footer that tracks the countdown. The menu now falls back to
+English when no language has been saved, an explicit choice still wins, and
+every version string is taken from the build instead of being hard-coded.
+
 ### Version
 - Bumped to `0.0.5`; the menu/device subtitle now comes from `KSHIM_BUILD_VERSION`
   instead of a hard-coded string, and the charger bitmap shows `kShimC v0.0.5`.
