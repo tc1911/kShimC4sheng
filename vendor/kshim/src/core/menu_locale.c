@@ -207,7 +207,7 @@ static const char *const kshim_menu_text_table[2][KSHIM_TEXT_COUNT] = {
         [KSHIM_TEXT_NAME_TF]          = "TF card ArmadaOS",
         [KSHIM_TEXT_NAME_DIAGNOSTIC]  = "Linux diagnostics",
 
-        [KSHIM_TEXT_LANGUAGE_LABEL]   = "语言 / Language",
+        [KSHIM_TEXT_LANGUAGE_LABEL]   = "Language",
         [KSHIM_TEXT_LANGUAGE_STATE]   = "English",
         [KSHIM_TEXT_LANGUAGE_DESC]    = "Choose the menu display language.",
         [KSHIM_TEXT_LANGUAGE_SELECT]  = "Select",

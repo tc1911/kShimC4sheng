@@ -14,7 +14,7 @@ After flashing to `boot_a`, every boot starts with the menu:
 
 Touch is not supported; use the volume keys to move and the power key to confirm.
 
-![UI preview](docs/ui-preview/pages-overview.png)
+![UI preview](docs/ui-preview/pages-overview-en.png)
 
 ## Status
 
@@ -76,7 +76,7 @@ larger than 192 MiB. For Windows, see [`windows/README.md`](windows/README.md).
 | Boot environment | Current slot, default boot, auto-boot delay, last boot |
 | Advanced boot | Fastboot, Recovery, 9008; current boot only |
 | Settings | Language and boot delay, persisted in NVM |
-| Language | Simplified Chinese / English, applied immediately |
+| Language | English (default) / Simplified Chinese, applied immediately |
 | Boot delay | No auto-boot, 3/5/8/10/15/30 seconds |
 | Device info | Model, SoC, DT model/memory/compatible list, framebuffer, version |
 

@@ -15,7 +15,10 @@
   Device info is now a two-column field grid.
 - Fixed language/device-info hangs: `info_values` pointer cast and a dangling
   countdown label.
+- Default menu language is now English when no language has been saved; an
+  explicit choice still wins.
 - Font subset grew to 741 glyphs for the new strings.
+- Added English UI previews (`docs/ui-preview/pages-overview-en.png`).
 
 ## 0.0.4 — 2026-10-29
 

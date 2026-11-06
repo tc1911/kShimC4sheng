@@ -6,7 +6,7 @@
 由 `config/sheng_defconfig` 构建。
 
 - 大小：4,194,304 B
-- sha256：`9be19f7386670428f74e3dbb7f717c4a65eff03eaf7761be5b4b1fb61030251d`
+- sha256：`ee0340fceb666f09df7a97f05f8affee70af592732444643244c8bb47a65d18a`
 - 来源：`vendor/kshim` + 本仓库补丁（见 `vendor/README.md`）
 - 工具链：aarch64-linux-gnu-gcc 16.2.0
 
