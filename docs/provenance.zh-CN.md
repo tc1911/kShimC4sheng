@@ -57,13 +57,13 @@ sheng 适配补丁清单见 `patches/README.zh-CN.md` 与 `vendor/README.md`。
 
 | 内容 | 来源 |
 |---|---|
-| 分区布局/安装文档 | [code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux)；本项目按 128 GiB Linux 调整 |
+| 安装文档 | [code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux)；本项目不包含具体设备的偏移 |
 | Debian forky/KDE rootfs | [ianchb/debian-sheng](https://github.com/ianchb/debian-sheng) `rootfs.yml`（`IMAGE_SIZE: 10G`） |
 | sheng 内核/boot.img | [ianchb/sm8550-mainline](https://github.com/ianchb/sm8550-mainline) release `7.2.6-mac` |
 | sheng 固件 | [ianchb/sheng-firmware](https://github.com/ianchb/sheng-firmware) |
 | TWRP | [NoobMaster233/twrp-sheng-build](https://github.com/NoobMaster233/twrp-sheng-build) v1.0.1，sha256 `55909845eae82e2d22748271d948ff2a09cf821d29761c183621404cde9397d5` |
 | TWRP 设备树 | [map220v/android_device_xiaomi_sheng](https://github.com/map220v/android_device_xiaomi_sheng) |
-| 原厂 boot/dtbo/init_boot/ROM | 用户设备 dump / 官方 fastboot 包；**不随仓库分发**，本机备份在 `/home/tc191/6spBackup/rom/` |
+| 原厂 boot/dtbo/init_boot/ROM | 用户设备 dump / 官方 fastboot 包；**不随仓库分发**，只保存在本地 |
 
 ## 相对上游的主要修改
 

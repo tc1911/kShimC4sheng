@@ -25,9 +25,8 @@ the charger screen work.
 - UI: Atlas, six pages (Boot environment / Advanced boot / Settings /
   Language / Boot delay / Device info).
 - Lives in `boot_a`, slot A; no `misc`, no `slot_suffix` changes.
-- Partitions: `linux` 128 GiB, `userdata` 104.4 GiB.
-- Full stock backup: `/home/tc191/6spBackup/rom/` (local, not distributed).
-- Rollback: `fastboot flash boot_a /home/tc191/6spBackup/rom/stock/boot_a-stock.img`.
+- Keep your own stock `boot_a` and GPT backup locally; do not commit them.
+- Rollback: `fastboot flash boot_a /path/to/stock-boot.img`.
 
 ## Quick start
 

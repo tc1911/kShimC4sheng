@@ -13,7 +13,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
-FONT = "/home/tc191/项目/kindel/pkgs/fonts/LXGWWenKai-Regular.ttf"
+import os
+FONT = os.environ.get("PREVIEW_FONT", "")
+if not FONT:
+    raise SystemExit("set PREVIEW_FONT to an LXGW WenKai Regular TTF")
 OUT = Path(__file__).resolve().parent
 
 W, H = 1524, 1016
@@ -88,7 +91,7 @@ TEXTS = {
         "info": "设备信息",
         "readonly": "只读",
         "fields": [("机型", "Xiaomi Pad 6S Pro"), ("SoC", "Qualcomm SM8550"),
-                   ("DT 型号", "Xiaomi Pad 6S Pro (sheng)"), ("DT 报告内存", "12 GB"),
+                   ("DT 型号", "Xiaomi Pad 6S Pro (sheng)"), ("DT 报告内存", "运行时读取"),
                    ("DT 兼容列表", "xiaomi,sheng · qcom,sm8550"),
                    ("帧缓冲", "3048 × 2032 · 32 bpp"), ("kShimC 版本", "v0.0.5")],
         "info_note": "信息来自设备树与运行时探测，仅供查看。",
@@ -135,7 +138,7 @@ TEXTS = {
         "info": "Device Info",
         "readonly": "READ-ONLY",
         "fields": [("Model", "Xiaomi Pad 6S Pro"), ("SoC", "Qualcomm SM8550"),
-                   ("DT model", "Xiaomi Pad 6S Pro (sheng)"), ("DT memory", "12 GB"),
+                   ("DT model", "Xiaomi Pad 6S Pro (sheng)"), ("DT memory", "runtime"),
                    ("DT compatible", "xiaomi,sheng · qcom,sm8550"),
                    ("Framebuffer", "3048 × 2032 · 32 bpp"), ("kShimC version", "v0.0.5")],
         "info_note": "Read from the device tree and runtime probes; view only.",

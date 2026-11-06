@@ -10,7 +10,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT="$ROOT/out/backup/edl"
-LOADER="/home/tc191/小米8G2引导-铠侠勿用.melf"
+LOADER="${EDL_LOADER:-}"
 DO_REBOOT=0
 DO_RESET=0
 
@@ -27,6 +27,7 @@ done
 
 EDL="$ROOT/scripts/edl-local"
 [ -x "$EDL" ] || { echo "missing $EDL (run from the project tree)" >&2; exit 1; }
+[ -n "$LOADER" ] || { echo "set EDL_LOADER or pass --loader FILE" >&2; exit 1; }
 [ -f "$LOADER" ] || { echo "loader not found: $LOADER" >&2; exit 1; }
 mkdir -p "$OUT"
 
@@ -65,7 +66,7 @@ if [ "$avail" -lt $((16 * 1024 * 1024 * 1024)) ]; then
   exit 1
 fi
 
-# rl reads all GPT partitions. --skip=userdata keeps the 232 GiB encrypted
+# rl reads all GPT partitions. --skip=userdata keeps the large encrypted
 # userdata out of the backup; --genxml writes rawprogram XML for reference.
 "$EDL" --loader="$LOADER" --memory=ufs rl "$OUT" --skip=userdata --genxml
 

@@ -50,11 +50,7 @@ fetch_tar lvgl/lvgl 7f07a129e8d77f4984fff8e623fd5be18ff42e74 "$K/third_party/lvg
 
 # libfdt is a plain directory in the kShimC tree.
 if [ ! -f "$K/lib/libfdt/fdt.c" ]; then
-  if [ -f /tmp/opencode/kShimC-up/lib/libfdt/fdt.c ]; then
-    cp -a /tmp/opencode/kShimC-up/lib/libfdt "$K/lib/libfdt"
-  else
-    fetch_tar sunflower2333/kShimC 82ce6eaa10c36e64cfd3f16799172d854f9a955b "$CACHE/kshimc"
-    cp -a "$CACHE/kshimc/lib/libfdt" "$K/lib/libfdt"
-  fi
+  fetch_tar sunflower2333/kShimC 82ce6eaa10c36e64cfd3f16799172d854f9a955b "$CACHE/kshimc"
+  cp -a "$CACHE/kshimc/lib/libfdt" "$K/lib/libfdt"
 fi
 echo "pinned dependencies are in place."

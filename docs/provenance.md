@@ -60,13 +60,13 @@ Fetch script: `scripts/fetch_deps.sh` (defaults to `ghproxy.net`; override with
 
 | Content | Source |
 |---|---|
-| Partition layout / install notes | [code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux); adjusted here for 128 GiB Linux |
+| Install notes | [code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux); no device-specific offsets are included here |
 | Debian forky/KDE rootfs | [ianchb/debian-sheng](https://github.com/ianchb/debian-sheng) `rootfs.yml` (`IMAGE_SIZE: 10G`) |
 | sheng kernel / boot.img | [ianchb/sm8550-mainline](https://github.com/ianchb/sm8550-mainline) release `7.2.6-mac` |
 | sheng firmware | [ianchb/sheng-firmware](https://github.com/ianchb/sheng-firmware) |
 | TWRP | [NoobMaster233/twrp-sheng-build](https://github.com/NoobMaster233/twrp-sheng-build) v1.0.1, sha256 `55909845eae82e2d22748271d948ff2a09cf821d29761c183621404cde9397d5` |
 | TWRP device tree | [map220v/android_device_xiaomi_sheng](https://github.com/map220v/android_device_xiaomi_sheng) |
-| Stock boot/dtbo/init_boot/ROM | user device dump / official fastboot package; **not distributed**, local backup at `/home/tc191/6spBackup/rom/` |
+| Stock boot/dtbo/init_boot/ROM | user device dump / official fastboot package; **not distributed**, kept locally |
 
 ## Main changes from upstream
 

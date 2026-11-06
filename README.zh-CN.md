@@ -23,9 +23,8 @@
 
 - 当前 UI：Atlas 六页（启动环境 / 高级启动 / 设置 / 语言 / 开机延迟 / 设备信息）。
 - 常驻 `boot_a`，A 槽；不使用 `misc`、不切换 `slot_suffix`。
-- 分区：`linux` 128 GiB，`userdata` 104.4 GiB。
-- 原厂完整备份：`/home/tc191/6spBackup/rom/`。
-- 回滚：`fastboot flash boot_a /home/tc191/6spBackup/rom/stock/boot_a-stock.img`。
+- 原厂 `boot_a` 与 GPT 备份只保存在本地，不要提交到仓库。
+- 回滚：`fastboot flash boot_a /path/to/stock-boot.img`。
 
 ## 快速开始
 

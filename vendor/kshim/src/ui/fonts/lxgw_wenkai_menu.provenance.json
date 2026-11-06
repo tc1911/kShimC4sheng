@@ -2,7 +2,7 @@
   "source": "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
   "source_sha256": "8d6ba638ac9553413354cfaab97637c1cd778444e259441ea1e5f8fb2c697fba",
   "license": "SIL Open Font License 1.1 (lxgw_wenkai_menu-OFL.txt)",
-  "coverage": "menu preset: ASCII, Latin-1, Latin Extended-A, general punctuation, CJK punctuation, full-width Latin/punctuation, plus the characters of /tmp/opencode/menu-required.txt",
+  "coverage": "menu preset: ASCII, Latin-1, Latin Extended-A, general punctuation, CJK punctuation, full-width Latin/punctuation, plus the characters of the menu locale/UI sources",
   "coverage_mode": "menu",
   "glyphs": 741,
   "raw_bytes": 158672,

@@ -24,7 +24,7 @@
 
   ```bash
   fastboot set_active a
-  fastboot flash boot_a /home/tc191/6spBackup/rom/stock/boot_a-stock.img
+  fastboot flash boot_a /path/to/stock-boot.img
   ```
 
 - Check whether `dtbo_a` / `init_boot_a` / `vendor_boot_a` were erased.
