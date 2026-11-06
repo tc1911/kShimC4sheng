@@ -1,60 +1,71 @@
-# 架构
+# Architecture
+
+**English** | [简体中文](architecture.zh-CN.md)
 
 ```text
 ABL
- └─ boot_a: kShimC shim（MBKP 打包，保留原厂 boot 头）
-     ├─ Android 条目：恢复原厂内核头，直接跳转
-     │   ABL 继续提供 dtbo_a / init_boot_a / vendor_boot_a
-     └─ Linux 条目：跳转 manifest 内的 Image + DTB（+ 可选 initrd）
-         cmdline 写入 /chosen/bootargs，root=PARTLABEL=linux
+ └─ boot_a: kShimC shim (packed by MBKP, stock boot header preserved)
+     ├─ Android entry: restores the stock kernel header, jumps directly
+     │   ABL keeps providing dtbo_a / init_boot_a / vendor_boot_a
+     └─ Linux entry: jumps to Image + DTB (+ optional initrd) from the manifest
+         cmdline is written to /chosen/bootargs, root=PARTLABEL=linux
 ```
 
-## 镜像布局
+## Image layout
 
-`make-boot.sh` 把原厂内核和 Linux 载荷放进同一个 `boot_a`：
+`make-boot.sh` places the stock kernel and the Linux payload into a single
+`boot_a` image:
 
-- 原厂 `boot_a` 的 kernel 作为 **BaseImage**，ABL 的 DT/ramdisk 继续有效；
-- Linux `Image`、DTB、可选 initrd 作为普通 manifest 条目；
-- shim 自身 4 MiB，manifest 在镜像尾部；
-- 总大小必须小于 `boot_a` 分区（sheng 为 192 MiB）。
+- the stock `boot_a` kernel becomes the **BaseImage**, so ABL's DT/ramdisk
+  remain valid;
+- the Linux `Image`, DTB and optional initrd are ordinary manifest entries;
+- the shim itself is 4 MiB; the manifest sits at the end of the image;
+- the total must fit in the `boot_a` partition (192 MiB on sheng).
 
-manifest 由 MultiBootKernelPatcher 生成；`packer/manifest.py` 可在不启动设备
-的情况下回读校验条目、DTB bootargs 和 initrd 索引。
+The manifest is produced by MultiBootKernelPatcher; `packer/manifest.py` can
+read it back and verify entries, DTB bootargs and the initrd index without
+booting the device.
 
-## 为什么放在 boot_a
+## Why boot_a
 
-sheng 是 A/B 设备，ABL 按当前槽位加载 `boot_x`、`init_boot_x`、
-`vendor_boot_x`、`dtbo_x`。shim 固定在 `boot_a`、设备停在 A 槽：
+sheng is an A/B device: ABL loads `boot_x`, `init_boot_x`, `vendor_boot_x` and
+`dtbo_x` for the current slot. The shim is pinned to `boot_a` and the device
+stays on slot A:
 
-- Android 的 ramdisk/DTBO 与 `system_a` 对齐，不需要伪造 `slot_suffix`；
-- 选 Android 时不需要二次 bootloader、不写 `misc`/BCB；
-- 选 Linux 时不需要电脑、root 或 WoaManager。
+- Android's ramdisk/DTBO match `system_a`; no fake `slot_suffix` is needed;
+- selecting Android needs no second bootloader and writes no `misc`/BCB;
+- selecting Linux needs no PC, root or WoaManager.
 
-代价是 Android OTA 会覆盖 `boot_a`，升级后需要重新刷菜单镜像。
+The trade-off is that an Android OTA overwrites `boot_a`; reflash the menu image
+after an update.
 
-## 显示
+## Display
 
-sheng 的 SDE 是 10 SSPP legacy 布局，CrDK 的 `CrSplashRead()` 原本只接受
-≤8 路，解码失败。当前使用 `CONFIG_KSHIM_SPLASH_FALLBACK`：直接复用 ABL 留下
-的 `cont_splash_region`（0xB8000000，stride 12192，XRGB8888）作为扫描缓冲。
-SDE 路由解码本身尚未修，属于已知限制。
+sheng's SDE uses a 10-SSPP legacy layout, while CrDK's `CrSplashRead()`
+originally accepted at most 8 pipes, so decoding failed. The current build uses
+`CONFIG_KSHIM_SPLASH_FALLBACK`: it reuses the `cont_splash_region` left by ABL
+(0xB8000000, stride 12192, XRGB8888) as the scanout buffer. SDE routing itself
+is still undecoded; this is a known limitation.
 
-## 输入与高级启动
+## Input and advanced boot
 
-- 音量键映射 PREV/NEXT，电源键映射 ENTER；触屏未适配。
-- Recovery/Fastboot/EDL 走 `qcom_reboot`：sheng 的 SPMI 仲裁器是 **v7**，
-  已放宽到 CrDK 支持的 5/7/8/8.5；EDL 未实测。
+- Volume keys map to PREV/NEXT, power maps to ENTER; touch is not supported.
+- Recovery/Fastboot/EDL use `qcom_reboot`: sheng's SPMI arbiter is **v7**, and
+  the code now accepts the CrDK-supported 5/7/8/8.5. EDL has not been tested.
 
-## 设置与上次启动
+## Settings and last boot
 
-选中条目成功交接后，把条目索引、语言、开机延迟写入 PMIC SDAM：
+After an entry hands off successfully, its index, the menu language and the
+boot delay are written to PMIC SDAM:
 
-- 主记录 `0x8400`，备份 `0x8500`，偏移 `0x50/0x80`；
-- `KSET` v2 magic + CRC32；
-- 记录失效时回退 manifest 默认，不阻止手动选择。
+- primary record `0x8400`, backup `0x8500`, offsets `0x50/0x80`;
+- `KSET` v2 magic + CRC32;
+- if the record is invalid, fall back to the manifest default without blocking
+  manual selection.
 
-## 关键限制
+## Key limits
 
-- 只写 `boot_a`；不碰 `super`、`userdata`、`linux`。
-- splash 保留区或 ABL 行为变化可能导致黑屏。
-- `fastboot boot` 与正常开机的 bootconfig/vendor_boot 路径不完全等价。
+- Only `boot_a` is written; `super`, `userdata` and `linux` are untouched.
+- Changes to the splash reservation or ABL behavior can cause a black screen.
+- `fastboot boot` is not fully equivalent to a normal boot regarding
+  bootconfig/vendor_boot.

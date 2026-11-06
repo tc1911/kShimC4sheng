@@ -1,43 +1,47 @@
 # kShimC4sheng
 
-小米平板 6S Pro（sheng / SM8550）的开机菜单，替代 `fastboot set_active a|b`
-和 WoaManager 的刷写式双系统切换。
+A boot menu for the Xiaomi Pad 6S Pro (sheng / SM8550), replacing
+`fastboot set_active a|b` and WoaManager's flash-based dual-boot switching.
 
-刷入 `boot_a` 后，每次开机先进入菜单：
+**English** | [简体中文](README.zh-CN.md)
 
-- **Android**：跳转原厂内核，ABL 继续加载 `init_boot_a` / `vendor_boot_a` /
-  `dtbo_a`，不切槽、不重启。
-- **Linux**：用内嵌的 Image + DTB（+ 可选 initrd）启动 `linux` 分区，
-  根文件系统为 `root=PARTLABEL=linux`。
+After flashing to `boot_a`, every boot starts with the menu:
 
-触屏未适配，使用音量键选择、电源键确认。
+- **Android** — jumps to the stock kernel; ABL continues with
+  `init_boot_a` / `vendor_boot_a` / `dtbo_a`. No slot switch, no reboot.
+- **Linux** — boots the `linux` partition with an embedded Image + DTB
+  (and optional initrd), using `root=PARTLABEL=linux`.
 
-![UI 预览](docs/ui-preview/pages-overview.png)
+Touch is not supported; use the volume keys to move and the power key to confirm.
 
-## 状态
+![UI preview](docs/ui-preview/pages-overview.png)
 
-真机已验证：Android 原厂与 Debian forky/KDE 均可从菜单启动；语言、开机延迟、
-上次启动记录、Recovery/Fastboot 和关机充电界面可用。
+## Status
 
-- 当前 UI：Atlas 六页（启动环境 / 高级启动 / 设置 / 语言 / 开机延迟 / 设备信息）。
-- 常驻 `boot_a`，A 槽；不使用 `misc`、不切换 `slot_suffix`。
-- 分区：`linux` 128 GiB，`userdata` 104.4 GiB。
-- 原厂完整备份：`/home/tc191/6spBackup/rom/`。
-- 回滚：`fastboot flash boot_a /home/tc191/6spBackup/rom/stock/boot_a-stock.img`。
+Verified on hardware: the stock Android system and Debian forky/KDE both boot
+from the menu. Language, boot delay, last-boot record, Recovery/Fastboot and
+the charger screen work.
 
-## 快速开始
+- UI: Atlas, six pages (Boot environment / Advanced boot / Settings /
+  Language / Boot delay / Device info).
+- Lives in `boot_a`, slot A; no `misc`, no `slot_suffix` changes.
+- Partitions: `linux` 128 GiB, `userdata` 104.4 GiB.
+- Full stock backup: `/home/tc191/6spBackup/rom/` (local, not distributed).
+- Rollback: `fastboot flash boot_a /home/tc191/6spBackup/rom/stock/boot_a-stock.img`.
 
-需要：解锁 bootloader、原厂 `boot_a` 镜像、发行版的 `boot.img`（或内核
-`Image` + DTB）。
+## Quick start
+
+Requirements: unlocked bootloader, a stock `boot_a` image, and a distro
+`boot.img` (or a kernel `Image` + DTB).
 
 ```sh
-# 发行版 boot.img
+# From a distro boot.img
 scripts/make-boot.sh \
   --stock-boot stock_boot_a.img \
   --distro-boot debian-boot.img \
   --out out/boot_a.img
 
-# 或内核构建产物
+# Or from kernel build outputs
 scripts/make-boot.sh \
   --stock-boot stock_boot_a.img \
   --linux-image Image \
@@ -46,82 +50,85 @@ scripts/make-boot.sh \
   --out out/boot_a.img
 ```
 
-只依赖 `python3` + `bash`，首次会自动编译打包器；不改 runtime 时不需要交叉
-编译器，直接使用 `prebuilt/sheng-runtime.bin`。
+Only `python3` + `bash` are required. The packer is built automatically on
+first use. If you do not change the runtime, no cross compiler is needed:
+`prebuilt/sheng-runtime.bin` is used as-is.
 
-先一次性启动验证，不写分区：
+Test with a one-shot boot first; nothing is written to the partition:
 
 ```sh
 scripts/test_boot.sh --image out/boot_a.img
 ```
 
-确认菜单、Android、Linux 都正常后再刷入：
+Once the menu, Android and Linux all work, flash it:
 
 ```sh
 scripts/flash.sh --image out/boot_a.img
 ```
 
-`make-boot.sh` 会保留原厂 boot 头版本，并检查镜像不超过 192 MiB。
-Windows 构建见 [`windows/README.md`](windows/README.md)。
+`make-boot.sh` preserves the stock boot header version and rejects images
+larger than 192 MiB. For Windows, see [`windows/README.md`](windows/README.md).
 
-## 菜单
+## Menu
 
-| 页面 | 内容 |
+| Page | Contents |
 | --- | --- |
-| 启动环境 | 当前槽位、默认启动、自动启动秒数、上次启动 |
-| 高级启动 | Fastboot、Recovery、9008；仅本次开机有效 |
-| 设置 | 语言、开机延迟，写入 NVM 持久保存 |
-| 语言 | 简体中文 / English，切换后立即生效 |
-| 开机延迟 | 不自动启动、3/5/8/10/15/30 秒 |
-| 设备信息 | 机型、SoC、DT 型号/内存/兼容列表、帧缓冲、版本 |
+| Boot environment | Current slot, default boot, auto-boot delay, last boot |
+| Advanced boot | Fastboot, Recovery, 9008; current boot only |
+| Settings | Language and boot delay, persisted in NVM |
+| Language | Simplified Chinese / English, applied immediately |
+| Boot delay | No auto-boot, 3/5/8/10/15/30 seconds |
+| Device info | Model, SoC, DT model/memory/compatible list, framebuffer, version |
 
-音量 `+/-` 移动，电源键确认。Android OTA 会覆盖 `boot_a`，菜单随之消失，
-重新刷一次即可。
+Volume `+/-` moves, power confirms. An Android OTA overwrites `boot_a` and
+removes the menu; flash the image again afterwards.
 
-## 构建 runtime（可选）
+## Building the runtime (optional)
 
-仅在修改菜单/配置时需要：
+Only needed when changing the menu or its configuration:
 
 ```sh
-scripts/fetch_toolchain.sh   # Arch/CachyOS 可自动解包交叉编译器
+scripts/fetch_toolchain.sh   # Arch/CachyOS: unpacks a cross compiler automatically
 scripts/fetch_deps.sh        # CrDK / picolibc / LVGL / libfdt
 scripts/build_runtime.sh config/sheng_defconfig out/runtime
 ```
 
-产物必须是 4 MiB，输出到 `out/runtime.bin`；`make-boot.sh` 会自动使用它。
+The result must be exactly 4 MiB and is copied to `out/runtime.bin`;
+`make-boot.sh` picks it up automatically.
 
-## 目录
+## Layout
 
 ```text
-packer/     boot 镜像解析、载荷提取、manifest 打包与校验
-config/     sheng 的分区/默认项配置与 defconfig
-scripts/    构建、备份、测试启动、刷机
-vendor/     kShimC runtime 与 MultiBootKernelPatcher
-prebuilt/   sheng runtime（免交叉编译）
-docs/       架构、设备资料、双系统安装、排障、来源
-tests/      纯 Python 合成镜像回归
+packer/     boot image parsing, payload extraction, manifest packing/verification
+config/     sheng partition/default configuration and defconfig
+scripts/    build, backup, test boot, flash
+vendor/     kShimC runtime and MultiBootKernelPatcher
+prebuilt/   sheng runtime (no cross compiler required)
+docs/       architecture, device data, dual-boot install, troubleshooting, provenance
+tests/      pure-Python synthetic image regression tests
 ```
 
-## 已知限制
+## Known limitations
 
-- 显示使用 `cont_splash_region` 强制 framebuffer；SDE 路由解码仍未修，splash
-  保留区变化时可能黑屏。
-- 触屏不可用；EDL 恢复依赖小米 service account。
-- `fastboot boot` 与正常启动的 bootconfig/vendor_boot 路径不完全等价，
-  Android 条目以刷入后的行为为准。
-- 上次启动记录是 best-effort：PMIC 清 SDAM 时回退 Android 默认。
-- 只写 `boot_a`，不改 `super`、`userdata`、`linux`。
+- Display uses the `cont_splash_region` forced framebuffer; SDE routing is still
+  undecoded, so a changed splash reservation may produce a black screen.
+- Touch is unavailable; EDL recovery depends on a Xiaomi service account.
+- `fastboot boot` is not fully equivalent to a normal boot regarding
+  bootconfig/vendor_boot; trust the flashed behavior for the Android entry.
+- The last-boot record is best-effort: if the PMIC clears SDAM, Android is the
+  fallback default.
+- Only `boot_a` is written; `super`, `userdata` and `linux` are untouched.
 
-## 文档
+## Documentation
 
-- [架构与启动链](docs/architecture.md)
-- [设备资料](docs/device-profile.md)
-- [Android + Debian 双系统](docs/sheng-debian-dual-boot.md)
-- [排障](docs/troubleshooting.md)
-- [来源与许可证](docs/provenance.md)
-- [变更记录](CHANGELOG.md)
+- [Architecture and boot chain](docs/architecture.md)
+- [Device profile](docs/device-profile.md)
+- [Android + Debian dual boot](docs/sheng-debian-dual-boot.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Provenance and licenses](docs/provenance.md)
+- [Changelog](CHANGELOG.md)
 
-## 许可证
+## License
 
-GPL-3.0（继承自 kShimC）。第三方组件与镜像分发注意事项见
-[`LICENSES.md`](LICENSES.md)。
+GPL-3.0 (inherited from kShimC). See [`LICENSES.md`](LICENSES.md) for
+third-party components and image redistribution notes.

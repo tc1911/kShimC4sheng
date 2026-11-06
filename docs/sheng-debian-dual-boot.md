@@ -1,18 +1,20 @@
-# Android + Debian 双系统
+# Android + Debian dual boot
 
-设备：Xiaomi Pad 6S Pro（sheng，SM8550，256 GB）。
-引导：kShimC 在 `boot_a`、A 槽，不使用 `set_active`，不写 `misc`。
+**English** | [简体中文](sheng-debian-dual-boot.zh-CN.md)
 
-## 分区
+Device: Xiaomi Pad 6S Pro (sheng, SM8550, 256 GB).
+Boot: kShimC in `boot_a`, slot A; no `set_active`, no `misc` writes.
 
-GPT 使用 4096 字节逻辑扇区：
+## Partitions
+
+The GPT uses 4096-byte logical sectors:
 
 ```text
 29 userdata   3,094,592 – 30,452,735   104.4 GiB   A03A
 30 linux     30,452,736 – 64,007,162   128.0 GiB   8300
 ```
 
-TWRP 下创建：
+Create them in TWRP:
 
 ```bash
 sgdisk --delete=29 \
@@ -22,27 +24,30 @@ sgdisk --delete=29 \
 sgdisk --verify /dev/block/sda
 ```
 
-userdata 是 f2fs，不能缩小；改分区等于删除重建。先备份 `/sdcard` 和应用数据。
+`userdata` is f2fs and cannot be shrunk in place; repartitioning means deleting
+and recreating it. Back up `/sdcard` and app data first.
 
-## rootfs
+## Rootfs
 
-来源：`tc1911/debianlinux4sheng` 的 Actions artifact
-`rootfs-forky-KDE Plasma-linux`（10 GiB ext4）。
+Source: the `tc1911/debianlinux4sheng` Actions artifact
+`rootfs-forky-KDE Plasma-linux` (10 GiB ext4).
 
 ```bash
 fastboot flash linux build/debian/rootfs.img
 ```
 
-首次启动由 `x-systemd.growfs` 扩到分区大小；没有自动扩时：
+On first boot `x-systemd.growfs` expands it to the partition size. If it does
+not run automatically:
 
 ```bash
 sudo resize2fs /dev/sda30
 ```
 
-## boot 镜像
+## Boot image
 
-Debian 的 `boot.img` 是 v0：`kernel_offset=4096`、Image.gz、无 ramdisk，
-gzip 末尾追加 sheng DTB。`make-boot.sh` 会自动解压并拆出 DTB：
+Debian's `boot.img` is v0: `kernel_offset=4096`, Image.gz, no ramdisk, with the
+sheng DTB appended after the gzip stream. `make-boot.sh` decompresses it and
+splits out the DTB automatically:
 
 ```bash
 scripts/make-boot.sh \
@@ -53,29 +58,33 @@ scripts/make-boot.sh \
   --bootargs 'root=PARTLABEL=linux rw rootwait udmabuf.size_limit_mb=256'
 ```
 
-`udmabuf.size_limit_mb=256` 必须保留：它在原 boot.img 的 cmdline 里，DTB 里
-没有。刷入：
+`udmabuf.size_limit_mb=256` must be preserved: it lives in the original
+boot.img cmdline, not in the DTB. Flash it:
 
 ```bash
 fastboot flash boot_a out/boot_a_debian.img
 ```
 
-## 启动行为
+## Boot behavior
 
-- 默认 Android，8 秒倒计时；选 Linux 后走内嵌 Debian Image + DTB。
-- 根分区靠 `root=PARTLABEL=linux`，没有 initrd。
-- 上次启动会预选，但菜单仍显示、倒计时仍生效。
-- 换内核/发行版：重新提取 Image/DTB，跑一次 `make-boot.sh` 再刷 `boot_a`。
+- Android is the default with an 8-second countdown; choosing Linux boots the
+  embedded Debian Image + DTB.
+- The root partition is found via `root=PARTLABEL=linux`; there is no initrd.
+- The last boot preselects an entry, but the menu still appears and the
+  countdown still applies.
+- To change kernel or distro: extract the new Image/DTB, run `make-boot.sh`
+  once and flash `boot_a` again.
 
-## 备份与回滚
+## Backup and rollback
 
 ```text
 /home/tc191/6spBackup/rom/
-├── partitions/   125 个分区 + 主/备 GPT（旧 232.4 GiB userdata 布局）
-├── stock/        原厂 boot_a/boot_b/dtbo/init_boot/vendor_boot
-└── app/          DataBackup 应用数据
+├── partitions/   125 partitions + primary/backup GPT (old 232.4 GiB userdata layout)
+├── stock/        stock boot_a/boot_b/dtbo/init_boot/vendor_boot
+└── app/          DataBackup app data
 ```
 
-- 原厂 boot：`fastboot flash boot_a stock/boot_a-stock.img`
-- 旧 GPT 只适用于旧布局；当前 128 GiB 布局需要重新备份 GPT。
-- Android OTA 会覆盖 `boot_a`，升级后重刷菜单镜像。
+- Stock boot: `fastboot flash boot_a stock/boot_a-stock.img`
+- The old GPT only matches the old layout; the current 128 GiB layout needs a
+  fresh GPT backup.
+- An Android OTA overwrites `boot_a`; reflash the menu image afterwards.

@@ -1,60 +1,88 @@
 # Changelog
 
-## 未发布 — Atlas UI
+**English** | [简体中文](CHANGELOG.zh-CN.md)
 
-### 菜单
-- 重构为 Atlas 六页布局：启动环境、高级启动、设置、语言、开机延迟、设备信息。
-- 左侧固定导航 + 蓝色焦点条，右侧卡片/网格；移除旧 STAR_CHART 与金色装饰。
-- 新增 56×56 A8 线性图标（Android/Linux/高级/设置/信息/重启/关机等）。
-- 底部状态显示倒计时、已取消自动启动、设备名；信息页改为两列字段网格。
-- 修复语言页/设备信息页卡死：`info_values` 指针强转、悬空倒计时 label。
-- 字库扩到 741 字，覆盖新增文案。
+## Unreleased — Atlas UI
+
+### Menu
+- Refactored into the six-page Atlas layout: Boot environment, Advanced boot,
+  Settings, Language, Boot delay, Device info.
+- Fixed left navigation with a blue focus bar; cards/grids on the right; the
+  old STAR_CHART and gold decorations were removed.
+- Added 56×56 A8 line icons (Android/Linux/Advanced/Settings/Info/Restart/Power
+  and more).
+- The footer shows the countdown, cancelled auto-boot state and device name;
+  Device info is now a two-column field grid.
+- Fixed language/device-info hangs: `info_values` pointer cast and a dangling
+  countdown label.
+- Font subset grew to 741 glyphs for the new strings.
 
 ## 0.0.4 — 2026-10-29
 
-### 菜单
-- 左侧标题下增加设备信息行：`Xiaomi Pad 6S Pro · sheng · v0.0.4`。
-- 右侧改为 Atlas 布局：小标题、48px 大标题、28px 描述、金色标签胶囊；移除大插画/羽毛 logo。
-- 删除原版标题下的两条金色短线，以及底部左右两组波浪山形装饰。
-- 菜单字库扩到 732 字，覆盖新增文案；修复设备信息页因 LVGL 字体缓存过大导致的崩溃。
+### Menu
+- Added a device line under the left title:
+  `Xiaomi Pad 6S Pro · sheng · v0.0.4`.
+- Reworked the right side into the Atlas layout: overline, 48 px title,
+  28 px description, gold tag pills; removed the large illustration/feather
+  logo.
+- Removed the two gold title underlines and the bottom wave/mountain
+  decorations.
+- Grew the menu font to 732 glyphs and fixed a device-info crash caused by an
+  oversized LVGL font cache.
 
-### 充电界面
-- 内置充电界面支持中英双语，语言跟随菜单里的语言项。
-- 充电界面底部显示 `kShimC v0.0.4`；中文文案使用内嵌 LXGW 位图，不依赖菜单字库。
-- 长按电源键 2 秒进入正常菜单的逻辑不变。
+### Charger screen
+- Built-in charger screen is bilingual and follows the menu language.
+- Bottom line shows `kShimC v0.0.4`; Chinese text uses embedded LXGW bitmaps
+  and does not depend on the menu font.
+- Holding power for 2 seconds still opens the normal menu.
 
 ## 0.0.3 — 2026-10-27
 
-### 内置充电模式
-- 关机插电开机时，识别 ABL 的 `androidboot.mode=charger`，跳过菜单直接显示内置充电界面。
-- 识别同时覆盖 `/chosen/bootargs`、Android bootconfig / initrd 尾部参数，以及 PMIC 启动原因兜底。
-- 充电界面为两行英文：`CHARGER CONNECTED` / `HOLD POWER TO BOOT`；长按电源键 2 秒进入正常菜单。
-- 不依赖 Debian、systemd 或任何发行版 userspace；只使用裸机 framebuffer 和按键。
-- 说明：裸机没有电池驱动，不显示电量百分比；面板背光由 KTZ8866 控制，shim 暂不关背光。
+### Built-in charger mode
+- When powered off and plugged in, detect ABL's `androidboot.mode=charger` and
+  skip the menu to show the built-in charger screen.
+- Detection covers `/chosen/bootargs`, Android bootconfig / initrd tail
+  parameters, and a PMIC boot-reason fallback.
+- The charger screen is two English lines: `CHARGER CONNECTED` /
+  `HOLD POWER TO BOOT`; hold power for 2 seconds to open the normal menu.
+- No dependency on Debian, systemd or any distro userspace; only the bare-metal
+  framebuffer and keys.
+- Note: there is no battery driver in bare metal, so no percentage is shown;
+  panel backlight is controlled by KTZ8866 and is not turned off by the shim.
 
-### 设置持久化
-- SDAM 记录升级到 v2，同一条记录保存：上次启动项、菜单语言、开机延迟。
-- 设置页新增“开机延迟”子菜单，与语言选择同一交互：
-  `不自动启动 / 3 秒 / 5 秒 / 8 秒 / 10 秒 / 15 秒 / 30 秒`。
-- 语言和延迟重启、关机后保留；`0` 显示为“不自动启动”。
-- 设备信息页只保留只读字段，删除启动诊断行。
+### Settings persistence
+- SDAM records upgraded to v2, storing last boot entry, menu language and boot
+  delay in one record.
+- Settings gained a "Boot delay" submenu with the same interaction as language:
+  `No auto-boot / 3 s / 5 s / 8 s / 10 s / 15 s / 30 s`.
+- Language and delay survive reboot and power-off; `0` is shown as
+  "No auto-boot".
+- Device info keeps read-only fields only; the boot diagnostic row was removed.
 
-### 修复与打磨
-- 修复 bootconfig trailer 大小按本机字节序读取（arm64 小端），此前会误报 `bc=-15`。
-- 修复充电界面初始化顺序：在 `menu_build` 前建立 PON 按键描述符，避免 `c=-11`。
-- 菜单字库扩到 721 字，覆盖设置页新增文案，消除方块字。
-- 删除未采用的 ADC 电量读取实验代码，保留精简充电界面。
+### Fixes and polish
+- Fixed bootconfig trailer size being read in host byte order (arm64 is
+  little-endian); it previously reported `bc=-15`.
+- Fixed charger-screen init order: create the PON key descriptor before
+  `menu_build` to avoid `c=-11`.
+- Grew the menu font to 721 glyphs for the new settings strings and removed
+  missing-glyph boxes.
+- Removed the unused ADC battery experiment; kept the simplified charger screen.
 
 ## 0.0.2 — 2026-10-24
 
-- 菜单记住上次启动的系统（PMIC SDAM `KSET` 记录 + CRC32、双份回退）。
-- 选中条目后显示“正在启动，请稍候”，避免误判卡死。
-- 设置页精简：设备固定为 sheng，移除设备选择与默认启动项。
-- 版本号、署名和启动提示更新；菜单字库扩到 708 字。
-- Windows 一键构建：纯 Python FDT 编辑，自带 `MultiBootKernelPatcher.exe`，无需 dtc/fdtput。
+- The menu remembers the last booted system (PMIC SDAM `KSET` record + CRC32,
+  with a backup copy).
+- Shows "Starting, please wait" after selection to avoid a false hang.
+- Settings simplified: device is fixed to sheng; device selection and the
+  default-boot entry were removed.
+- Version, credits and boot hints updated; menu font grew to 708 glyphs.
+- Windows one-click build: pure-Python FDT editing, bundled
+  `MultiBootKernelPatcher.exe`, no dtc/fdtput needed.
 
 ## 0.0.1 — 2026-10-23
 
-- 首个 sheng 适配版本：boot_a 开机菜单，替代 `fastboot set_active` / WoaManager 刷写式切换。
-- SM8550 显示走 `cont_splash_region` 回退；按键、设备信息、高级启动（Fastboot/Recovery/EDL）可用。
-- 支持打包 Debian/发行版 boot.img，双系统 Android + Debian 真机验证通过。
+- First sheng port: a `boot_a` boot menu replacing `fastboot set_active` /
+  WoaManager flash-based switching.
+- SM8550 display uses the `cont_splash_region` fallback; keys, device info and
+  Advanced boot (Fastboot/Recovery/EDL) work.
+- Packs Debian/distro boot.img; Android + Debian dual boot verified on hardware.

@@ -1,37 +1,48 @@
-# 待做的 kShimC 源码补丁
+# kShimC source patches
 
-`vendor/kshim` 是五代快照，未做修改。sheng 上机后预计需要下面两个补丁，
-补丁前请先把实测值写进 `docs/device-profile.md`。
+**English** | [简体中文](README.zh-CN.md)
 
-## 1. `src/dt/splash.c`：SM8550 显示拓扑
+`vendor/kshim` is the fifth-generation kShimC snapshot. The sheng patches
+below are already applied in this repository; this file records what changed
+and what is still optional.
 
-现状：
+## 1. `src/dt/splash.c`: SM8550 display topology
 
-- `src/dt/splash.c:241` 只匹配 `qcom,sde-kms`；
-- `:253` 只读 `mdp_phys`；
-- `:264-280` 只区分 `0xc0000000`（Sun/SM8750）和 `0xd0000000`（Canoe/SM8850），
-  其余走 legacy；
-- `:292` pipe 上限 8，`:305` mixer 上限 6。
+Applied:
 
-需要：
+- read the SM8550 `sde` node and `mdp_phys` register from the live DT;
+- accept 10 SSPPs and up to 8 mixer slots (6 real mixers + 2 `0xf0f`
+  placeholders);
+- keep the legacy CTL/SSPP decoder for non-Sun/Canoe platforms.
 
-1. 从 `dtbo_a` 读出 SM8550 的 `sde` 节点和 `mdp_phys` 寄存器；
-2. 确认 DPU version（`dmesg | grep -i dpu`）与 mixer/LM 数量；
-3. 若超过 legacy 上限，扩展 `offsets()`（`:184-190`）的容量，或为 SM8550 增加
-   与 Sun/Canoe 并列的分支。
+If SDE decoding still fails, `CONFIG_KSHIM_SPLASH_FALLBACK` reuses the ABL
+`cont_splash_region` as an XRGB8888 framebuffer (see `src/dt/resources.c`).
+SDE routing itself remains undecoded.
 
-## 2. `src/dt/device_info.c`：sheng 白名单
+## 2. `src/dt/device_info.c`: sheng detection
 
-现状：`src/dt/device_info.c:203-235` 只认 `lenovo,elden` / `lenovo,baldur`
-等 Y700 组合，`enum device_board` 只有 `UNKNOWN/TB322FC/TB323FU`。
+Applied:
 
-需要：
+- recognize `qcom,kalama` as SM8550 and `xiaomi,sheng` (or a model string
+  containing `sheng`) as the board;
+- skip the zero-size placeholder bank in `/memory`;
+- report `Xiaomi Pad 6S Pro` / `sheng (SM8550)` in the UI and settings.
 
-1. 加入 `xiaomi,sheng` + `qcom,sm8550`（以及原厂 panel compatible）；
-2. 增加 `SHENG` 枚举与对应分支（设备信息页、默认 DTB 选择）；
-3. 若 `qcom,sm8550-tlmm` 的按键 pin 与 Y700 不同，同步 `src/dt/keys.c`。
+## 3. `src/drivers/qcom_reboot.c`: SPMI v7
 
-## 3. 可选：触屏
+Applied: accept SPMI v5/v7/v8/8.5 instead of only v8/8.5. sheng reports v7, so
+Recovery/Fastboot/EDL would otherwise fail with `KSHIM_QCOM_REBOOT_UNSUPPORTED`.
 
-sheng 的触控是 Novatek NT36532E + 用户态 `thp`，kShimC 目前只支持 ST FTM5。
-在真机上摸清 I²C 地址/中断/复位脚之前不要打开 `CONFIG_KSHIM_TOUCH`。
+## 4. Settings and Atlas UI
+
+Applied:
+
+- SDAM `KSET` v2 records at `0x8400/0x8500` for last boot, language and delay;
+- Atlas six-page UI (`src/ui/menu_atlas.h`) and 56×56 A8 icons
+  (`src/ui/atlas_icons.h`).
+
+## 5. Optional: touch
+
+sheng uses a Novatek NT36532E panel with the userspace `thp` stack; kShimC only
+supports ST FTM5 today. Do not enable `CONFIG_KSHIM_TOUCH` before the I²C
+address, interrupt and reset GPIO have been verified on hardware.

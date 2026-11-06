@@ -1,11 +1,13 @@
 # Prebuilt runtime
 
-`sheng-runtime.bin` is the 4 MiB kShimC runtime for Xiaomi Pad 6S Pro (sheng),
-built from `config/sheng_defconfig`.
+**English** | [简体中文](README.zh-CN.md)
+
+`sheng-runtime.bin` is the 4 MiB kShimC runtime for the Xiaomi Pad 6S Pro
+(sheng), built from `config/sheng_defconfig`.
 
 - size: 4,194,304 B
-- sha256: `d8e1becbb584d96d1fdf231e33bbf70dd779905c887ce2ea226054877bc7bd73`
-- source: `vendor/kshim` at commit `65c07c2` + local patches (`vendor/README.md`)
+- sha256: `9be19f7386670428f74e3dbb7f717c4a65eff03eaf7761be5b4b1fb61030251d`
+- source: `vendor/kshim` plus local patches (see `vendor/README.md`)
 - toolchain: aarch64-linux-gnu-gcc 16.2.0
 
 You only need to rebuild it when the menu or its configuration changes.
