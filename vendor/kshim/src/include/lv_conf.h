@@ -83,7 +83,7 @@
 #define LV_USE_KEYBOARD 0
 #define LV_USE_LABEL 1
 #define LV_USE_LED 0
-#define LV_USE_LINE 0
+#define LV_USE_LINE 1
 #define LV_USE_LIST 1
 #define LV_USE_MENU 0
 #define LV_USE_MSGBOX 0

@@ -260,6 +260,12 @@ static int KshimButtonIndex(const lv_obj_t *Button)
 static void KshimShowEntry(size_t Index)
 {
   if (mContext == NULL || Index >= mContext->EntryCount) return;
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  /* Atlas renders selection and detail from platform data; the legacy
+   * chrome is covered by the atlas root and must not be touched. */
+  (void)Index;
+  return;
+#endif
   /* Entering or leaving the read-only summary changes the STAR chart geometry;
    * an ordinary row restores the baseline layout. */
   const char *EntryAction = mContext->ActionLabels[Index];
@@ -270,6 +276,8 @@ static void KshimShowEntry(size_t Index)
     mInfoState = Info;
     (void)KshimDesignRelayout();
   }
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+#endif
   if (mStatus != NULL) lv_label_set_text(mStatus, mContext->Entries[Index]);
   if (mTags != NULL) {
     const char *Tags = "";
@@ -320,16 +328,24 @@ static void KshimConfirmIndex(size_t Index)
 {
   if (mContext == NULL || Index >= mContext->EntryCount)
     return;
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+#endif
   mContext->PendingIndex = (int)Index;
   if (mContext->DefaultEntries != 0U && Index < KSHIM_MENU_POWER_OFF)
     mContext->PendingAction = (kshim_menu_action_t)(Index + 1U);
   KshimShowEntry(Index);
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+#endif
   /* STAR avoids transformed intermediate layer allocation in the 512 KiB heap. */
+#if !defined(CONFIG_KSHIM_UI_ATLAS) || !CONFIG_KSHIM_UI_ATLAS
   if (mBootButton != NULL && !KSHIM_MENU_IS_NATIVE &&
       mMenuDesign.kind != KSHIM_DESIGN_STAR_CHART)
     KshimAnimate(mBootButton, KshimSetConfirmPulse, 0, 1024,
                  KSHIM_UI_CONFIRM_DURATION_MS, lv_anim_path_ease_in_out);
+#endif
 }
+
+#include "menu_atlas.h"
 
 static void KshimMenuEvent(lv_event_t *Event)
 {
@@ -472,6 +488,7 @@ static void KshimCreateFonts(uint32_t ShortEdge)
   if (KSHIM_MENU_IS_NATIVE) { KshimNativeCreateFonts(); return; }
   static const int32_t Sizes[3][3] = {{48, 28, 22}, {28, 20, 16}, {20, 14, 12}};
   const int32_t *Size = Sizes[ShortEdge >= 720U ? 0 : ShortEdge >= 320U ? 1 : 2];
+  static const int32_t AtlasSizes[3] = {64, 44, 28};
   int32_t DesignSizes[3];
   uint32_t Scale = 0U;
   if (mMenuDesign.enabled) {
@@ -482,13 +499,24 @@ static void KshimCreateFonts(uint32_t ShortEdge)
     DesignSizes[2] = kshim_design_max(10, kshim_design_px(mMenuDesign.status_size, Scale));
     Size = DesignSizes;
   }
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  /* The atlas layout is designed at 3048x2032; do not let the legacy
+   * STAR_CHART scale override these sizes. */
+  Size = AtlasSizes;
+#endif
   /* A 48 px glyph is ~9 KiB in the 512 KiB LVGL heap. Keep the title cache
    * small so the atlas page and the device-info summary cannot exhaust it. */
   static const uint32_t CacheCounts[3] = {12U, 20U, 18U};
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  static const uint32_t AtlasCache[3] = {8U, 14U, 16U};
+  const uint32_t *Caches = AtlasCache;
+#else
+  const uint32_t *Caches = CacheCounts;
+#endif
   for (unsigned Index = 0; Index < 3U; Index++) {
     mFonts[Index] = mFontData == NULL ? NULL :
         lv_tiny_ttf_create_data_ex(mFontData, kshim_ui_font_size(), Size[Index],
-            LV_FONT_KERNING_NONE, CacheCounts[Index]);
+            LV_FONT_KERNING_NONE, Caches[Index]);
   }
   /* The STAR summary body on a short-edge <=1080 panel needs a smaller face;
    * slot three is created only there, sharing the body glyph cache, and stays
@@ -680,6 +708,9 @@ static int KshimBuildChrome(void)
     KshimAnimate(mPanel, KshimSetOpacity, LV_OPA_TRANSP, LV_OPA_COVER,
         CONFIG_KSHIM_MENU_ENTRY_DURATION_MS, lv_anim_path_ease_out);
   }
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  if (KshimAtlasInit() != 0) return -1;
+#endif
   return 0;
 }
 
@@ -767,7 +798,11 @@ int kshim_lvgl_init(kshim_lvgl_t *Context, kshim_framebuffer_t *Framebuffer, Qco
   lv_group_set_default(Group);
   lv_indev_set_group(mKeyInput, Group);
   Context->Group = Group;
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  if (KshimBuildChrome() != 0) goto Failed;
+#else
   if (KshimBuildChrome() != 0 || KshimRebuildEntries(0U) != 0) goto Failed;
+#endif
   Context->Display = mDisplay;
   Context->Input = mKeyInput;
   Context->PointerInput = mPointerInput;
@@ -787,6 +822,7 @@ Failed:
 void kshim_lvgl_frame(kshim_lvgl_t *Context, uint32_t ElapsedMs)
 {
   if (Context == NULL || Context != mContext || Context->Ready == 0U) return;
+
   if (ElapsedMs != 0U) {
     lv_tick_inc(ElapsedMs);
     Context->ElapsedMs += ElapsedMs;
@@ -889,7 +925,12 @@ int kshim_lvgl_set_entries_described(kshim_lvgl_t *Context, const char *const *N
     Context->ActionLabels[Index] = NULL;
     Context->Roles[Index] = KSHIM_MENU_ROLE_UNKNOWN;
   }
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  int Result = 0;
+  AtlasRebuild(Initial);
+#else
   int Result = KshimRebuildEntries(Initial);
+#endif
   if (Result == 0) {
     Context->UserInteracted = 0U;
 #if defined(CONFIG_KSHIM_MENU_LANGUAGE_SWITCH) && CONFIG_KSHIM_MENU_LANGUAGE_SWITCH
@@ -911,6 +952,9 @@ void kshim_lvgl_set_entry_roles(kshim_lvgl_t *Context, const kshim_menu_role_t *
       Count > KSHIM_MENU_MAX_ENTRIES) return;
   for (size_t Index = 0; Index < KSHIM_MENU_MAX_ENTRIES; Index++)
     Context->Roles[Index] = (Roles != NULL && Index < Count) ? Roles[Index] : KSHIM_MENU_ROLE_UNKNOWN;
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  KshimAtlasRefresh();
+#else
   /* STAR_CHART re-evaluates the info geometry from the actually focused row:
    * roles may change under a stable focus, so refresh from the group focus and
    * fall back to the initial index. */
@@ -921,10 +965,17 @@ void kshim_lvgl_set_entry_roles(kshim_lvgl_t *Context, const kshim_menu_role_t *
       KshimShowEntry((size_t)FocusedIndex);
   }
   if (mList != NULL) lv_obj_invalidate(mList);
+#endif
 }
 
 void kshim_lvgl_set_status(kshim_lvgl_t *Context, const char *Text)
 {
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  if (kshim_lvgl_ready(Context) && Text != NULL && mAtlasStatus != NULL) {
+    lv_label_set_text(mAtlasStatus, Text);
+    return;
+  }
+#endif
   /* In the STAR info state the status label carries the device title, so keep
    * writes on the (hidden) notice instead of clearing that title. */
   lv_obj_t *Notice;
@@ -942,7 +993,58 @@ void kshim_lvgl_set_countdown(kshim_lvgl_t *Context, uint32_t timeout_ms)
   Context->CountdownMs = timeout_ms;
   Context->CountdownEnabled = timeout_ms != 0U;
   Context->CountdownShown = UINT32_MAX;
+  if (timeout_ms != 0U) Context->CountdownCancelled = 0U;
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  if (mAtlasAutoValue != NULL) {
+    char Text[32];
+    if (timeout_ms == 0U)
+      snprintf(Text, sizeof(Text), "%s", kshim_menu_text(
+          Context->CountdownCancelled ? KSHIM_TEXT_ENV_CANCELLED : KSHIM_TEXT_ENV_OFF));
+    else
+      snprintf(Text, sizeof(Text), "%u 秒", (unsigned)(timeout_ms / 1000U));
+    lv_label_set_text(mAtlasAutoValue, Text);
+  }
+  AtlasRefreshStatus();
+#endif
 }
+
+void kshim_lvgl_cancel_countdown(kshim_lvgl_t *Context)
+{
+  if (!kshim_lvgl_ready(Context)) return;
+  Context->CountdownCancelled = 1U;
+  Context->CountdownMs = 0U;
+  Context->CountdownEnabled = 0U;
+  Context->CountdownShown = UINT32_MAX;
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+  if (mAtlasAutoValue != NULL)
+    lv_label_set_text(mAtlasAutoValue, kshim_menu_text(KSHIM_TEXT_ENV_CANCELLED));
+  kshim_lvgl_set_status(Context, kshim_menu_text(KSHIM_TEXT_ENV_CANCELLED));
+#endif
+}
+
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+void kshim_lvgl_set_page(kshim_lvgl_t *Context, uint8_t Page)
+{
+  if (Context != NULL) Context->UiPage = Page;
+}
+
+void kshim_lvgl_set_environment(kshim_lvgl_t *Context, const char *Slot,
+                                const char *DefaultName, const char *LastBoot)
+{
+  if (Context == NULL) return;
+  Context->UiEnvSlot = Slot;
+  Context->UiEnvDefault = DefaultName;
+  Context->UiEnvLast = LastBoot;
+}
+
+void kshim_lvgl_set_info_values(kshim_lvgl_t *Context,
+                                const char *const *Values, size_t Count)
+{
+  if (Context == NULL) return;
+  Context->UiInfoValues = Values;
+  Context->UiInfoCount = Count;
+}
+#endif
 
 void kshim_lvgl_touch(void *Context, const kshim_touch_event_t *Event)
 {

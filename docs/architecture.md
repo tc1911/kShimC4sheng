@@ -1,86 +1,60 @@
 # 架构
 
-## 1. 镜像布局
-
-`scripts/build.sh` 产出的是完整的 `boot_a` 分区镜像（v4 头 + 打包后的内核）。
-MBKP 把各条目按 2 MiB / 8 B 对齐后拼接，manifest 放在最后：
-
-| packed offset | 条目 | 类型 | flags | 内容 |
-|---|---|---|---|---|
-| 0x0 | Android | Linux | `BASE_IMAGE` + `EXECUTABLE` | 原厂 stock 内核（raw Image） |
-| 0x2000 | Attached Shim | Shim | `EXECUTABLE` | 4 MiB kShimC runtime |
-| 0x600000 | Linux | Linux | `EXECUTABLE` + `HAS_DTB` | 开源内核 Image（raw） |
-| 0x602000 | sheng-dtb | DTB | — | 已改写 `/chosen/bootargs` 的 DTB |
-| 0x6020xx | initrd | Blob | — | 可选 initrd（Armada 有，Debian 没有） |
-| 末尾 | — | Manifest | — | 条目表 + 原厂头备份 |
-
-偏移随载荷大小变化，上表是合成测试镜像的示例。manifest 的
-`base_image` 备份的是**原厂**内核头的前 5 个 u64：
-
-```
-0x00 instructions    0x10 image_size    0x20 manifest_offset
-0x28 manifest_size   0x30 shim_offset
+```text
+ABL
+ └─ boot_a: kShimC shim（MBKP 打包，保留原厂 boot 头）
+     ├─ Android 条目：恢复原厂内核头，直接跳转
+     │   ABL 继续提供 dtbo_a / init_boot_a / vendor_boot_a
+     └─ Linux 条目：跳转 manifest 内的 Image + DTB（+ 可选 initrd）
+         cmdline 写入 /chosen/bootargs，root=PARTLABEL=linux
 ```
 
-打包后的内核头被改成：
+## 镜像布局
 
-```
-0x00  BL <shim>              0x04  原厂第一条指令
-0x10  packed size            0x20  manifest offset
-0x28  manifest size          0x30  shim offset
-```
+`make-boot.sh` 把原厂内核和 Linux 载荷放进同一个 `boot_a`：
 
-## 2. 启动流程
+- 原厂 `boot_a` 的 kernel 作为 **BaseImage**，ABL 的 DT/ramdisk 继续有效；
+- Linux `Image`、DTB、可选 initrd 作为普通 manifest 条目；
+- shim 自身 4 MiB，manifest 在镜像尾部；
+- 总大小必须小于 `boot_a` 分区（sheng 为 192 MiB）。
 
-```
-ABL 读 boot_a
-  └─ 加载 packed 内核到 kernel load address，跳到 offset 0（BL shim）
-       └─ kShimC 保存现场、读 manifest、恢复原厂头、画菜单（8 s）
-            ├─ Android（默认）
-            │    ├─ 恢复原厂头 5 个 u64
-            │    ├─ 使用 ABL 传入的 DT 指针（dtbo_a）
-            │    ├─ init_boot_a / vendor_boot_a 已由 ABL 加载
-            │    └─ 跳原厂 kernel entry（entry_offset 0）
-            └─ Linux
-                 ├─ 把 Image / DTB / initrd 放到 manifest 的 load address
-                 ├─ 以 DTB 的 /chosen/bootargs 启动
-                 │    root=PARTLABEL=linux rw rootwait
-                 └─ initrd 存在时 /chosen/kshim,initrd-entry = <条目号>
-```
+manifest 由 MultiBootKernelPatcher 生成；`packer/manifest.py` 可在不启动设备
+的情况下回读校验条目、DTB bootargs 和 initrd 索引。
 
-选 Android 不重启、不改 `misc`、不切槽，所以 Android 看到的
-`ro.boot.slot_suffix` 仍是 `_a`，`super`/`userdata` 也都在 A 槽。
+## 为什么放在 boot_a
 
-## 3. 为什么不用 boot_b
+sheng 是 A/B 设备，ABL 按当前槽位加载 `boot_x`、`init_boot_x`、
+`vendor_boot_x`、`dtbo_x`。shim 固定在 `boot_a`、设备停在 A 槽：
 
-现有社区方案把 Linux boot 刷进 `boot_b`、擦 `dtbo_b`、`set_active b`。
-如果 shim 放进 `boot_b`：
+- Android 的 ramdisk/DTBO 与 `system_a` 对齐，不需要伪造 `slot_suffix`；
+- 选 Android 时不需要二次 bootloader、不写 `misc`/BCB；
+- 选 Linux 时不需要电脑、root 或 WoaManager。
 
-- ABL 会加载 `init_boot_b`/`vendor_boot_b`，与 Android 的 `_a` 系统不匹配；
-- 要启动 Android 必须伪造 `slot_suffix=_a` 或依赖 `system_b`；
-- 切回 Android 仍然要改 BCB/槽位。
+代价是 Android OTA 会覆盖 `boot_a`，升级后需要重新刷菜单镜像。
 
-boot_a 方案把“选 Android”变成一次普通的内核跳转，ABL 的槽位始终是 A，
-不需要 `misc` 写入，也不需要 root。
+## 显示
 
-## 4. 容量
+sheng 的 SDE 是 10 SSPP legacy 布局，CrDK 的 `CrSplashRead()` 原本只接受
+≤8 路，解码失败。当前使用 `CONFIG_KSHIM_SPLASH_FALLBACK`：直接复用 ABL 留下
+的 `cont_splash_region`（0xB8000000，stride 12192，XRGB8888）作为扫描缓冲。
+SDE 路由解码本身尚未修，属于已知限制。
 
-| 项 | 实测/估计 |
-|---|---|
-| runtime | 4.00 MiB（固定槽位） |
-| stock Android 内核 | 20–45 MiB（GKI，待实测） |
-| Linux Image（Armada） | 47.07 MiB |
-| initrd（Armada） | 43.40 MiB |
-| DTB | 0.14 MiB |
-| 合计 | 95–140 MiB |
-| boot 分区 | 192 MiB |
+## 输入与高级启动
 
-`build.sh` 会在打包后检查 `boot 头 + packed ≤ 分区 - 64 KiB`，超限直接失败。
+- 音量键映射 PREV/NEXT，电源键映射 ENTER；触屏未适配。
+- Recovery/Fastboot/EDL 走 `qcom_reboot`：sheng 的 SPMI 仲裁器是 **v7**，
+  已放宽到 CrDK 支持的 5/7/8/8.5；EDL 未实测。
 
-## 5. A/B 与 OTA
+## 设置与上次启动
 
-- shim 只写 `boot_a`；`boot_b` 保持原样（可留原厂 boot 作应急）。
-- 设备必须处于 A 槽，否则 ABL 根本不加载 `boot_a`。
-- Android OTA 更新 `boot_a` 后会覆盖 shim；若 OTA 切到 B 槽，菜单暂时消失，
-  需要重新 `set_active a` 并重刷。
-- `dtbo_a` 不动，Android 的 DT 仍由原厂 dtbo 提供；Linux 用内嵌 DTB。
+选中条目成功交接后，把条目索引、语言、开机延迟写入 PMIC SDAM：
+
+- 主记录 `0x8400`，备份 `0x8500`，偏移 `0x50/0x80`；
+- `KSET` v2 magic + CRC32；
+- 记录失效时回退 manifest 默认，不阻止手动选择。
+
+## 关键限制
+
+- 只写 `boot_a`；不碰 `super`、`userdata`、`linux`。
+- splash 保留区或 ABL 行为变化可能导致黑屏。
+- `fastboot boot` 与正常开机的 bootconfig/vendor_boot 路径不完全等价。

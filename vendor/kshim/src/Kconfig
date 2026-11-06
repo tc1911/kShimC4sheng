@@ -231,6 +231,16 @@ menu "Framebuffer and UI"
             Qualcomm Volume Up, Volume Down, and Power map to up, down,
             and confirm respectively. See docs/menu-styles.md.
 
+    config KSHIM_UI_ATLAS
+        bool "Atlas full-page menu (sheng preview layout)"
+        depends on KSHIM_LVGL
+        default n
+        help
+            Replace the row list with a fixed sidebar plus page content:
+            boot environment, advanced actions, settings, language and
+            boot-delay grids, and a read-only device-information page.
+            Input, countdown and boot handoff stay on the shared path.
+
     choice KSHIM_MENU_STYLE
         prompt "Boot menu style"
         depends on KSHIM_LVGL

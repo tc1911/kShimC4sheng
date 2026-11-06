@@ -477,6 +477,7 @@ static void start_touch(struct kshim_resources *r)
     if (!TouchReady) { (void)touch_quiesce(); kshim_lvgl_set_status(&Lvgl, KSHIM_STR_KEYS_HINT); }
 }
 #endif
+
 static int start_menu(const void *fdt, int skip_ui)
 {
     struct kshim_resources *r = kshim_resources_get();
@@ -1711,6 +1712,26 @@ static int menu_build(struct menu_selection *menu, const char *const *names,
     }
     return menu_fill(menu);
 }
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+/* Push the page identity and read-only values the atlas pages need. Called
+ * immediately before every set_entries so a page switch rebuilds in place. */
+static void atlas_sync(struct menu_selection *menu)
+{
+    const char *def = NULL;
+    if (menu->original_initial < menu->pages[MENU_PAGE_MAIN].count)
+        def = menu->pages[MENU_PAGE_MAIN].names[menu->original_initial];
+    kshim_lvgl_set_page(&Lvgl, (uint8_t)menu->page);
+    kshim_lvgl_set_environment(&Lvgl, "A", def,
+                               menu->setting_nv_name[0] ? menu->setting_nv_name : NULL);
+    /* menu->info_values is a char[7][192] array, not an array of pointers.
+     * Build a pointer table once; the strings live as long as the menu. */
+    static const char *InfoPtrs[KSHIM_INFO_FIELD_COUNT];
+    for (size_t i = 0; i < KSHIM_INFO_FIELD_COUNT; ++i)
+        InfoPtrs[i] = menu->info_values[i];
+    kshim_lvgl_set_info_values(&Lvgl, InfoPtrs, KSHIM_INFO_FIELD_COUNT);
+}
+#endif
+
 /* 1 = payload selected; 2 = changed page; 0 = returned firmware action failed. */
 static int menu_activate(struct menu_selection *menu, size_t index,
                          size_t *selected, const char **failure)
@@ -2086,6 +2107,9 @@ static int platform_select(uint64_t fdt, const char *const *names,
 #endif
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
     struct menu_page *page = &menu.pages[menu.page];
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+    atlas_sync(&menu);
+#endif
     GuiStatus = -1;
     int status = start_menu(menu.fdt, ChargerUiRequested != 0);
     if (status) GuiStatus = -3;
@@ -2119,8 +2143,7 @@ static int platform_select(uint64_t fdt, const char *const *names,
             menu_frame();
             if (menu.timeout && kshim_lvgl_has_interacted(&Lvgl)) {
                 menu.timeout = 0;
-                kshim_lvgl_set_countdown(&Lvgl, 0);
-                kshim_lvgl_set_status(&Lvgl, KSHIM_STR_AUTO_CANCELLED);
+                kshim_lvgl_cancel_countdown(&Lvgl);
             }
             int index = kshim_lvgl_take_index(&Lvgl);
             if (index >= 0 && (size_t)index < page->count) {
@@ -2130,6 +2153,9 @@ static int platform_select(uint64_t fdt, const char *const *names,
                 kshim_lvgl_set_countdown(&Lvgl, 0);
                 if (result == 2) {
                     page = &menu.pages[menu.page];
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+                    atlas_sync(&menu);
+#endif
                     if (kshim_lvgl_set_entries_described(&Lvgl, page->names, page->descriptions,
                                                         page->action_labels, page->count,
                                                         page->initial)) {

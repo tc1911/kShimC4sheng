@@ -55,6 +55,15 @@ int kshim_lvgl_ready(const kshim_lvgl_t *Context);
 kshim_menu_action_t kshim_lvgl_take_selection(kshim_lvgl_t *Context);
 void kshim_lvgl_set_status(kshim_lvgl_t *Context, const char *Text);
 void kshim_lvgl_set_countdown(kshim_lvgl_t *Context, uint32_t timeout_ms);
+void kshim_lvgl_cancel_countdown(kshim_lvgl_t *Context);
+/* Atlas UI context. Page uses the platform menu_page_id order
+ * (0 main, 1 advanced, 2 language, 3 info, 4 settings, 5 device,
+ * 6 default, 7 delay). Strings are caller-owned and must outlive the page. */
+void kshim_lvgl_set_page(kshim_lvgl_t *Context, uint8_t Page);
+void kshim_lvgl_set_environment(kshim_lvgl_t *Context, const char *Slot,
+                                const char *DefaultName, const char *LastBoot);
+void kshim_lvgl_set_info_values(kshim_lvgl_t *Context,
+                                const char *const *Values, size_t Count);
 
 /* Replace the compatibility menu with 1..KSHIM_MENU_MAX_ENTRIES payload/action
  * labels (53 with language switching, otherwise 51). */
@@ -124,6 +133,13 @@ struct kshim_lvgl {
   uint8_t              DefaultEntries;
   uint8_t              ReducedQuality;
   uint8_t              CountdownEnabled;
+  uint8_t              CountdownCancelled;
   uint32_t             CountdownMs;
   uint32_t             CountdownShown;
+  uint8_t              UiPage;
+  const char          *UiEnvSlot;
+  const char          *UiEnvDefault;
+  const char          *UiEnvLast;
+  const char *const   *UiInfoValues;
+  size_t               UiInfoCount;
 };

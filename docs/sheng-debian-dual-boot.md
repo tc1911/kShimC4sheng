@@ -1,19 +1,18 @@
-# sheng 双系统：Android + Debian（2026-10-24 实机记录）
+# Android + Debian 双系统
 
-设备：Xiaomi Pad 6S Pro 12.4（sheng，SM8550，256 GB）
-引导：kShimC 在 `boot_a`，A 槽；不使用 `set_active`、不写 `misc`、不需要电脑。
+设备：Xiaomi Pad 6S Pro（sheng，SM8550，256 GB）。
+引导：kShimC 在 `boot_a`、A 槽，不使用 `set_active`，不写 `misc`。
 
-## 最终分区
+## 分区
 
-GPT 使用 4096 字节逻辑扇区（`sgdisk` / `parted` 都按这个单位）：
+GPT 使用 4096 字节逻辑扇区：
 
 ```text
-磁盘            64,007,168 sectors
-29 userdata     3,094,592 – 30,452,735   104.4 GiB   A03A  userdata
-30 linux       30,452,736 – 64,007,162   128.0 GiB   8300  linux
+29 userdata   3,094,592 – 30,452,735   104.4 GiB   A03A
+30 linux     30,452,736 – 64,007,162   128.0 GiB   8300
 ```
 
-创建命令（TWRP，root）：
+TWRP 下创建：
 
 ```bash
 sgdisk --delete=29 \
@@ -23,94 +22,52 @@ sgdisk --delete=29 \
 sgdisk --verify /dev/block/sda
 ```
 
-原来的 parted 写法（十进制 GB，userdata 128 GB、Linux 取剩余）也来自上游
-`code002-2/Xiaomi-pad-6s-pro-Linux` 的 `docs/安装指南.md`：
-
-```text
-rm 29
-mkpart userdata ext4 12.7GB 140.7GB
-mkpart linux ext4 140.7GB -0MB
-```
-
-注意 f2fs 的 userdata 不能缩小，改分区等于删除重建；先备份 `/sdcard` 和应用数据。
+userdata 是 f2fs，不能缩小；改分区等于删除重建。先备份 `/sdcard` 和应用数据。
 
 ## rootfs
 
-来源：`tc1911/debianlinux4sheng`（公开 fork）的 Actions artifact
-`rootfs-forky-KDE Plasma-linux`（id `12468629431`）。
-
-```text
-build/debian/rootfs.img   10 GiB ext4
-UUID                      ee8d3593-59b1-480e-a3b6-4fefb17ee7d8
-kernel modules            7.2.6-sm8550-00103-g42f3b40c702a
-fstab                     PARTLABEL=linux / ext4 defaults,x-systemd.growfs 0 1
-```
-
-写入：
+来源：`tc1911/debianlinux4sheng` 的 Actions artifact
+`rootfs-forky-KDE Plasma-linux`（10 GiB ext4）。
 
 ```bash
 fastboot flash linux build/debian/rootfs.img
 ```
 
-首次启动由 `x-systemd.growfs` 扩到 128 GiB；没有自动扩就手动
-`sudo resize2fs /dev/sda30`。
+首次启动由 `x-systemd.growfs` 扩到分区大小；没有自动扩时：
+
+```bash
+sudo resize2fs /dev/sda30
+```
 
 ## boot 镜像
 
-Debian 的 `boot.img` 是 v0：kernel_offset 4096、Image.gz、无 ramdisk，
-gzip 末尾追加 sheng DTB。`make-boot.sh` 会自动解压、拆 DTB：
+Debian 的 `boot.img` 是 v0：`kernel_offset=4096`、Image.gz、无 ramdisk，
+gzip 末尾追加 sheng DTB。`make-boot.sh` 会自动解压并拆出 DTB：
 
 ```bash
 scripts/make-boot.sh \
-  --stock-boot out/backup/boot_a.img \
+  --stock-boot /home/tc191/6spBackup/rom/stock/boot_a-stock.img \
   --distro-boot build/debian/boot.img \
   --out out/boot_a_debian.img \
   --default android \
   --bootargs 'root=PARTLABEL=linux rw rootwait udmabuf.size_limit_mb=256'
 ```
 
-首版产物：89,997,312 B，sha256
-`7a20e585ecaccd8f03c1adb9f75ade44c3c030c57470ac37961cbba53287b449`。
-
-当前（0.0.4，带上次启动、语言/延迟和充电模式）用同一条命令重新打包：
-
-```bash
-scripts/make-boot.sh \
-  --stock-boot /home/tc191/6spBackup/rom/stock/boot_a-stock.img \
-  --distro-boot build/debian/boot.img \
-  --out out/boot_a_v003.img \
-  --default android \
-  --bootargs 'root=PARTLABEL=linux rw rootwait udmabuf.size_limit_mb=256'
-```
-
-产物：90,005,504 B，sha256
-`e18dd5621c24a9dd3bef8eeb1e39c203c0913d29dcd11a004e39a010964e704d`。
-
-`udmabuf.size_limit_mb=256` 必须保留（原 boot.img 的 cmdline 里有，DTB 里没有）。
-
-刷入：
+`udmabuf.size_limit_mb=256` 必须保留：它在原 boot.img 的 cmdline 里，DTB 里
+没有。刷入：
 
 ```bash
 fastboot flash boot_a out/boot_a_debian.img
 ```
 
-首次启动默认 Android、8 秒超时；选 Linux 后走内置 Debian Image + DTB，
-根分区靠 `root=PARTLABEL=linux`，没有 initrd。
+## 启动行为
 
-## 上次启动、设置与启动提示（0.0.3+）
+- 默认 Android，8 秒倒计时；选 Linux 后走内嵌 Debian Image + DTB。
+- 根分区靠 `root=PARTLABEL=linux`，没有 initrd。
+- 上次启动会预选，但菜单仍显示、倒计时仍生效。
+- 换内核/发行版：重新提取 Image/DTB，跑一次 `make-boot.sh` 再刷 `boot_a`。
 
-- 选中并成功交接后，kShimC 把条目索引、语言和开机延迟写进 PMIC SDAM：
-  优先 `0x8400`，备份 `0x8500`，偏移 `0x50/0x80`，记录含 `KSET` v2 magic 与 CRC32。
-- 下次开机会预选这条记录，菜单仍显示、倒计时仍生效；没有记录或 CRC 不对
-  时回退 manifest 默认（Android）。
-- 记录是 best-effort，PMIC/固件清掉 SDAM 时只会回退默认，不影响手动选择。
-- 确认条目后会先在底部小字显示“正在启动，请稍候”，再交接内核。
-- 设备信息页显示 `上次启动: Android @8550` / `Linux @8550`；设置页保留
-  语言和开机延迟，设备固定为 sheng。
-
-## 备份 / 回滚
-
-改动前的完整备份：
+## 备份与回滚
 
 ```text
 /home/tc191/6spBackup/rom/
@@ -119,8 +76,6 @@ fastboot flash boot_a out/boot_a_debian.img
 └── app/          DataBackup 应用数据
 ```
 
-- 原厂 boot_a：`fastboot flash boot_a stock/boot_a-stock.img`
-- 旧 GPT 只能用于恢复**旧布局**；当前 128 GiB linux 布局需要重新备份 GPT
-  （`sgdisk --backup=...`），不要直接 `sgdisk --load-backup` 旧文件。
-- Android OTA 会覆盖 `boot_a`，需要重新刷 `out/boot_a_booting.img`。
-- 换内核/发行版：重新提取 Image/DTB，跑一次 `make-boot.sh` 再刷 boot_a。
+- 原厂 boot：`fastboot flash boot_a stock/boot_a-stock.img`
+- 旧 GPT 只适用于旧布局；当前 128 GiB 布局需要重新备份 GPT。
+- Android OTA 会覆盖 `boot_a`，升级后重刷菜单镜像。

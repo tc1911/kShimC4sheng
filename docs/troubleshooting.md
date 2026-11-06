@@ -1,58 +1,55 @@
 # 排障
 
-## 打包
+## 黑屏但有背光
 
-**`packer not built`**
-```sh
-make packer
-```
+1. 确认镜像里有 `CONFIG_KSHIM_SPLASH_FALLBACK=y`。
+2. 检查 ABL DT 是否仍有 `/reserved-memory/cont_splash_region`
+   （当前 sheng 为 0xB8000000，大小 0x2B00000）。
+3. 用 `fastboot boot out/boot_a.img` 先验证；失败重启会自动回原启动链。
 
-**`DTB /chosen bootargs mismatch` / `FDT_ERR_NOSPACE`**
-`sheng.dtb` 是 dtc 重新编译过的（`-p 8192`），正常情况下有足够空间。若仍报错，
-说明 `dtc` 版本过旧，升级 `device-tree-compiler`。
+## 菜单不出现，直接进 Android
 
-**`runtime must be exactly 4 MiB`**
-`scripts/build_runtime.sh` 的产物 `kShimC.bin` 必须是 4 MiB；不要用
-`objcopy` 裁掉尾部。
+- 确认当前槽位是 A：`fastboot getvar current-slot`。
+- 确认刷的是 `boot_a`，不是 `boot_b`。
+- 若刚做完 OTA，`boot_a` 已被原厂覆盖，需要重刷。
+- `fastboot boot` 与正常开机的 bootconfig 路径不同，以刷入后为准。
 
-**`stock kernel header slots 0x20/0x28/0x30 are not zero`**
-传入的不是原厂内核（可能已经是被 patch 过的镜像）。从原厂 `boot_a` 重新
-`extract.py --stock`。
+## Android 起不来
 
-**`exceeds partition budget`**
-192 MiB 减去 64 KiB 是硬上限。优先去掉 initrd（改用内置驱动的 rootfs），
-或压缩 Linux 内核（本项目要求 raw Image，不能直接放 gzip）。
+- 切回 A 槽并刷原厂 boot：
 
-## 刷机
+  ```bash
+  fastboot set_active a
+  fastboot flash boot_a /home/tc191/6spBackup/rom/stock/boot_a-stock.img
+  ```
 
-**菜单不出现，直接进 Android**
-- 当前槽位不是 A：`fastboot getvar current-slot`，`fastboot set_active a`
-- `boot_a` 没写进去：重新 `fastboot flash boot_a out/boot_a.img`
-- 设备仍从 `boot_b` 启动（B 槽有旧 Linux boot）
+- 检查 `dtbo_a` / `init_boot_a` / `vendor_boot_a` 是否被擦除。
 
-**菜单黑屏 / 花屏**
-sheng 走 `splash.c` 的 legacy SDE 路径，DPU 拓扑可能不匹配。先用
-`CONFIG_KSHIM_DEBUG_CONSOLE=y` 重新构建 runtime，接 UART 看输出；
-或在 `patches/` 里给 `splash.c` 加 SM8550 的 `mdp_phys` 解析。
+## Linux 卡住或进 emergency shell
 
-**选 Android 后 boot loop**
-- 确认 `init_boot_a`、`vendor_boot_a`、`dtbo_a` 没有被擦
-- 确认 `ro.boot.slot_suffix=_a`
-- 刷回备份 `boot_a` 验证 Android 本身没坏
+- 确认 `linux` 分区存在且 `PARTLABEL=linux`。
+- 确认 DTB 与内核版本匹配，`/chosen/bootargs` 含
+  `root=PARTLABEL=linux rw rootwait`。
+- 有 initrd 时确认 `kshim,initrd-entry` 指向正确条目。
+- Debian 首次启动需要扩容，卡住时看串口或 `journalctl`。
 
-**选 Linux 后 panic: unable to mount root**
-- `root=PARTLABEL=linux` 与分区 label 不符：`blkid` 检查
-- 内核缺 ext4/ufs 驱动：换发行版内核或加 initrd
-- DTB 不是这台机器的：`fdtget -t s sheng.dtb / compatible` 应含
-  `qcom,sm8550`
+## Recovery / Fastboot 切换失败
 
-**initrd 没生效**
-`fdtget -t u sheng.dtb /chosen kshim,initrd-entry` 应为 initrd 条目号（通常 3），
-且 manifest 里该条目 `Type=Blob`、`size` 正确。
+- sheng 的 SPMI 仲裁器是 v7；旧版只接受 v8/8.5。
+- 确认镜像包含 `qcom_reboot` 对 v7 的支持；错误码形如 `-102,s5`。
 
-## 救砖
+## fastboot 找不到设备
 
-1. 音量键组合进 fastboot，刷回 `out/backup/boot_a.img`。
-2. 仍不行：EDL 9008（sheng 需要小米 service account，社区工具不一定可用）。
-3. 不要刷 `abl`：`armada-sheng` 里的 `abl_signed-SM8550.elf` 是给 Odin/AYANEO
-   掌机的，sheng 刷了会变砖。
+- 换数据线/USB 口，确认设备在 bootloader（音量下 + 电源）。
+- `fastboot devices` 为空时不要继续刷机。
+
+## EDL / 9008
+
+- sheng 是 Kalama/SM8550，必须使用对应 firehose；Kailua（SM8635）loader
+  能过 Sahara，但 UFS 初始化时会掉 USB。
+- 优先使用分区备份 + 官方 fastboot 包恢复，不依赖 EDL 写回。
+
+## 代理 / 下载
+
+- 直连 GitHub 失败时可用 `gh-proxy.com` 代理 API 与 artifact；
+  私有仓库的 artifact 不能走公共代理。
