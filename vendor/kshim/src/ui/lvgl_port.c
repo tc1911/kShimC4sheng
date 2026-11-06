@@ -596,7 +596,7 @@ static int KshimBuildChrome(void)
 
   mSubtitle = lv_label_create(mPanel);
   if (mSubtitle == NULL) return -1;
-  lv_label_set_text_static(mSubtitle, "Xiaomi Pad 6S Pro \u00b7 sheng \u00b7 v0.0.4");
+  lv_label_set_text_static(mSubtitle, "Xiaomi Pad 6S Pro \u00b7 sheng \u00b7 v" KSHIM_BUILD_VERSION);
   lv_obj_set_style_text_font(mSubtitle, mStatusFont, 0);
   lv_obj_set_style_text_color(mSubtitle, KshimMutedColor(), 0);
   lv_label_set_long_mode(mSubtitle, LV_LABEL_LONG_DOT);

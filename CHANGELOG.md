@@ -2,7 +2,11 @@
 
 **English** | [简体中文](CHANGELOG.zh-CN.md)
 
-## Unreleased — Atlas UI
+## 0.0.5 — unreleased
+
+### Version
+- Bumped to `0.0.5`; the menu/device subtitle now comes from `KSHIM_BUILD_VERSION`
+  instead of a hard-coded string, and the charger bitmap shows `kShimC v0.0.5`.
 
 ### Menu
 - Refactored into the six-page Atlas layout: Boot environment, Advanced boot,

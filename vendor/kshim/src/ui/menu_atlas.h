@@ -626,7 +626,7 @@ static int KshimAtlasInit(void)
 
   AtlasText(mAtlasRoot, KSHIM_MENU_TEXT_TITLE("KShimC"), mAtlasTitleFont, ATLAS_TEXT,
             Margin, Margin / 2, W * 55 / 100, 72);
-  AtlasText(mAtlasRoot, "Xiaomi Pad 6S Pro \u00b7 sheng \u00b7 v0.0.4", mAtlasBodyFont,
+  AtlasText(mAtlasRoot, "Xiaomi Pad 6S Pro \u00b7 sheng \u00b7 v" KSHIM_BUILD_VERSION, mAtlasBodyFont,
             ATLAS_MUTED, Margin, Margin / 2 + 76, W * 55 / 100, 40);
   mAtlasLang = AtlasText(mAtlasRoot, kshim_menu_text(KSHIM_TEXT_LANGUAGE_STATE),
                          mAtlasBodyFont, ATLAS_MUTED, W - Margin - 260, Margin / 2 + 34,
