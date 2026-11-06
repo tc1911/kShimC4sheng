@@ -2,7 +2,7 @@
 
 **English** | [简体中文](CHANGELOG.zh-CN.md)
 
-## 0.0.5 — unreleased
+## 0.0.5 — 2026-11-07
 
 ### Version
 - Bumped to `0.0.5`; the menu/device subtitle now comes from `KSHIM_BUILD_VERSION`
