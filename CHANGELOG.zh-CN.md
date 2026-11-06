@@ -10,9 +10,14 @@
 - 新增 56×56 A8 线性图标（Android/Linux/高级/设置/信息/重启/关机等）。
 - 底部状态显示倒计时、已取消自动启动、设备名；信息页改为两列字段网格。
 - 修复语言页/设备信息页卡死：`info_values` 指针强转、悬空倒计时 label。
-- 未保存过语言时，菜单默认英文；已保存的选择仍然优先。
-- 新增英文界面预览 `docs/ui-preview/pages-overview-en.png`。
 - 字库扩到 741 字，覆盖新增文案。
+
+### 语言与文档
+- 未保存过语言时，菜单默认英文；在语言页显式保存过的选择仍然优先。
+- GitHub 默认展示英文文档；简体中文版保留为 `*.zh-CN.md`，每页顶部都有语言切换。
+- 新增英文界面预览（`docs/ui-preview/pages-overview-en.png`、
+  `docs/ui-preview/pages-en/`、`docs/images/menu-*-en.png`），英文 README
+  已改用英文预览。
 
 ## 0.0.4 — 2026-10-29
 
