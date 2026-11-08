@@ -174,6 +174,32 @@ int kshim_nv_load(const void *fdt, struct kshim_nv_selection *out)
         NvLastFingerprint = rec.fingerprint;
         return 0;
     }
+    /* The full KSET record can be lost while the 4-byte quick slot is still
+     * intact (for example after an interrupted record rewrite).  Fall back
+     * to the quick slot so "last boot" stays available; settings simply keep
+     * their defaults until a full record is written again. */
+    {
+        uint8_t quick;
+        uint16_t base = 0;
+        if (nv_quick_read(fdt, (uint16_t)0x8400U, &quick) == 0)
+            base = 0x8400U;
+        else if (nv_quick_read(fdt, (uint16_t)0x8500U, &quick) == 0)
+            base = 0x8500U;
+        if (base != 0)
+        {
+            out->index = quick;
+            out->fingerprint = 0;
+            out->language = 0;
+            out->timeout_s = 0;
+            out->has_settings = 0;
+            NvLastStatus = 0;
+            NvLastIndex = quick;
+            NvLastFingerprint = 0;
+            NvQuickLoaded = 1;
+            NvSlot = (int)base + NV_QUICK;
+            return 0;
+        }
+    }
     NvLastStatus = -2;
     return -1;
 }

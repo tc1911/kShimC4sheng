@@ -38,7 +38,7 @@ sheng 适配补丁清单见 `patches/README.zh-CN.md` 与 `vendor/README.md`。
 | `vendor/kshim/` | [sunflower2333/kShimC](https://github.com/sunflower2333/kShimC)，经 armadaos-freedom 提交 `244b7451`（2026-10-22）的 `devices/lenovo-tb323fu/boot/kshim-success-source` | GPL-3.0 |
 | `vendor/packer/` | [Project-Aloha/DualBootKernelPatcher](https://github.com/Project-Aloha/DualBootKernelPatcher)（MBKP 2.0.0.0） | GPL-3.0-or-later |
 | `vendor/packer/lib/inih/` | [benhoyt/inih](https://github.com/benhoyt/inih) | BSD-3-Clause |
-| `prebuilt/sheng-runtime.bin` | 本仓库构建，4 MiB，sha256 `f383d4edf5f7051fe651c14eae7a8f5df104c68c5eeda38a78d050109506b8f1` | GPL-3.0 |
+| `prebuilt/sheng-runtime.bin` | 本仓库构建，4 MiB，sha256 `e847b7a4d15ce59797b9bc7d0fb588e45283d662183dddb60dd3bb013eaa781e` | GPL-3.0 |
 | `prebuilt/windows/*.exe` | LLVM-MinGW 20261020 交叉编译 | GPL-3.0-or-later |
 
 ## 构建时拉取（不入库）
