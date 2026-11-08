@@ -62,7 +62,9 @@ boot delay are persisted in PMIC SDAM:
   base that was found during load;
 - language and boot delay use the `KSET` v2 record at `0x50` (CRC32), with the
   secondary base at `0x8500` as fallback;
-- if no valid record exists, fall back to the manifest default without blocking
+- if the `KSET` record is invalid, the quick slot is still read on its own; the
+  last-boot index survives and language/delay fall back to defaults;
+- if neither is valid, fall back to the manifest default without blocking
   manual selection.
 
 The first implementation rewrote a 16-byte record to every candidate slot,

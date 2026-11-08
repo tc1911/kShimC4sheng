@@ -45,6 +45,12 @@
 - 换数据线/USB 口，确认设备在 bootloader（音量下 + 电源）。
 - `fastboot devices` 为空时不要继续刷机。
 
+## 上次启动显示 `—`
+
+快捷槽不可读或索引越界。先选一次系统让它正常交接，shim 会写入 4 字节快捷槽；
+现在 `KSET` 记录损坏也不会再遮住快捷槽的值。若持续出现，确认构建 runtime 的
+defconfig 里 `CONFIG_KSHIM_BOOT_LAST=y`。
+
 ## EDL / 9008
 
 - sheng 是 Kalama/SM8550，必须使用对应 firehose；Kailua（SM8635）loader

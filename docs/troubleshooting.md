@@ -50,6 +50,13 @@
   (volume down + power).
 - Do not flash while `fastboot devices` is empty.
 
+## Last boot shows `—`
+
+The quick slot is unreadable or holds an out-of-range index. Reboot once after
+selecting an entry; the shim writes the 4-byte quick slot on handoff. A corrupt
+`KSET` record no longer hides the quick-slot value. If it persists, check that
+`CONFIG_KSHIM_BOOT_LAST=y` in the defconfig used to build the runtime.
+
 ## EDL / 9008
 
 - sheng is Kalama/SM8550 and needs the matching firehose. A Kailua (SM8635)

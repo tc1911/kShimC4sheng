@@ -9,6 +9,10 @@
 
 ### Fixes
 - The Atlas home page now resolves "Last boot" from the saved index instead of always showing `—`.
+- If the full SDAM record is corrupt, the quick slot is read on its own, so the
+  last-boot index survives; language and delay fall back to defaults.
+- The Atlas environment is synced after the NVM load, so the first menu build
+  already shows the saved entry.
 
 ### Performance
 - Cut the menu-to-OS handoff from 30–40 s to about 13 s (Android) and 11 s
