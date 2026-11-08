@@ -2,7 +2,10 @@
 
 **English** | [简体中文](CHANGELOG.zh-CN.md)
 
-## Unreleased
+## 0.0.6 — 2026-11-09
+
+### Version
+- Bumped to `0.0.6`.
 
 ### Performance
 - Cut the menu-to-OS handoff from 30–40 s to about 13 s (Android) and 11 s

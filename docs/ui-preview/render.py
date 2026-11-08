@@ -55,7 +55,7 @@ TEXTS = {
     "zh": {
         "suffix": "",
         "title": "KShimC 启动器",
-        "device": "Xiaomi Pad 6S Pro · sheng · v0.0.5",
+        "device": "Xiaomi Pad 6S Pro · sheng · v0.0.6",
         "lang_label": "简体中文",
         "nav": ["Android 原厂", "Linux", "高级启动模式", "设置", "设备信息", "重启", "关机"],
         "hint": "音量 + / - 选择 · 电源键确认",
@@ -93,7 +93,7 @@ TEXTS = {
         "fields": [("机型", "Xiaomi Pad 6S Pro"), ("SoC", "Qualcomm SM8550"),
                    ("DT 型号", "Xiaomi Pad 6S Pro (sheng)"), ("DT 报告内存", "运行时读取"),
                    ("DT 兼容列表", "xiaomi,sheng · qcom,sm8550"),
-                   ("帧缓冲", "3048 × 2032 · 32 bpp"), ("kShimC 版本", "v0.0.5")],
+                   ("帧缓冲", "3048 × 2032 · 32 bpp"), ("kShimC 版本", "v0.0.6")],
         "info_note": "信息来自设备树与运行时探测，仅供查看。",
         "charger1": "已连接电源线",
         "charger2": "长按电源开机",
@@ -101,7 +101,7 @@ TEXTS = {
     "en": {
         "suffix": "-en",
         "title": "KShimC Launcher",
-        "device": "Xiaomi Pad 6S Pro · sheng · v0.0.5",
+        "device": "Xiaomi Pad 6S Pro · sheng · v0.0.6",
         "lang_label": "English",
         "nav": ["Android (Stock)", "Linux", "Advanced Boot", "Settings",
                 "Device Info", "Restart", "Power Off"],
@@ -140,7 +140,7 @@ TEXTS = {
         "fields": [("Model", "Xiaomi Pad 6S Pro"), ("SoC", "Qualcomm SM8550"),
                    ("DT model", "Xiaomi Pad 6S Pro (sheng)"), ("DT memory", "runtime"),
                    ("DT compatible", "xiaomi,sheng · qcom,sm8550"),
-                   ("Framebuffer", "3048 × 2032 · 32 bpp"), ("kShimC version", "v0.0.5")],
+                   ("Framebuffer", "3048 × 2032 · 32 bpp"), ("kShimC version", "v0.0.6")],
         "info_note": "Read from the device tree and runtime probes; view only.",
         "charger1": "CHARGER CONNECTED",
         "charger2": "HOLD POWER TO BOOT",
@@ -374,7 +374,7 @@ def charger(T):
     d = ImageDraw.Draw(img)
     text(d, (W // 2, H // 2 - 52), T["charger1"], ImageFont.truetype(FONT, 34), TEXT, anchor="mm")
     text(d, (W // 2, H // 2 + 8), T["charger2"], ImageFont.truetype(FONT, 34), TEXT, anchor="mm")
-    text(d, (W // 2, H // 2 + 94), "kShimC v0.0.5", F_SMALL, MUTED, anchor="mm")
+    text(d, (W // 2, H // 2 + 94), "kShimC v0.0.6", F_SMALL, MUTED, anchor="mm")
     return img
 
 

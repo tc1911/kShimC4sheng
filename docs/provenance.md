@@ -40,7 +40,7 @@ The sheng patch list is in `patches/README.md` and `vendor/README.md`.
 | `vendor/kshim/` | [sunflower2333/kShimC](https://github.com/sunflower2333/kShimC), via armadaos-freedom commit `244b7451` (2026-10-22), `devices/lenovo-tb323fu/boot/kshim-success-source` | GPL-3.0 |
 | `vendor/packer/` | [Project-Aloha/DualBootKernelPatcher](https://github.com/Project-Aloha/DualBootKernelPatcher) (MBKP 2.0.0.0) | GPL-3.0-or-later |
 | `vendor/packer/lib/inih/` | [benhoyt/inih](https://github.com/benhoyt/inih) | BSD-3-Clause |
-| `prebuilt/sheng-runtime.bin` | built by this repository, 4 MiB, sha256 `6838cc5209e5e0df8c1ec8e689e55cc936773e06849b780e967ca21099ac850e` | GPL-3.0 |
+| `prebuilt/sheng-runtime.bin` | built by this repository, 4 MiB, sha256 `6f0f45e68a566dd22d4fe64cd2937e70bc41fb9ae327d81279737aae1cae5453` | GPL-3.0 |
 | `prebuilt/windows/*.exe` | cross-compiled with LLVM-MinGW 20261020 | GPL-3.0-or-later |
 
 ## Fetched at build time (not committed)
