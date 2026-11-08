@@ -6,7 +6,7 @@
 (sheng), built from `config/sheng_defconfig`.
 
 - size: 4,194,304 B
-- sha256: `e847b7a4d15ce59797b9bc7d0fb588e45283d662183dddb60dd3bb013eaa781e`
+- sha256: `4194554fbb58eb533d4d98fbeda5a1507b7b5d492d433877dbdf9f47c8d44680`
 - source: `vendor/kshim` plus local patches (see `vendor/README.md`)
 - toolchain: aarch64-linux-gnu-gcc 16.2.0
 

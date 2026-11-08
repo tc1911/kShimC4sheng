@@ -2113,11 +2113,13 @@ static int platform_select(uint64_t fdt, const char *const *names,
 #endif
 #if CONFIG_KSHIM_FRAMEBUFFER && CONFIG_KSHIM_LVGL
     struct menu_page *page = &menu.pages[menu.page];
-#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
-    atlas_sync(&menu);
-#endif
     GuiStatus = -1;
     int status = start_menu(menu.fdt, ChargerUiRequested != 0);
+#if defined(CONFIG_KSHIM_UI_ATLAS) && CONFIG_KSHIM_UI_ATLAS
+    /* start_menu() loads the NVM selection; sync afterwards so the first
+     * Atlas build sees the saved last-boot index. */
+    if (!status) atlas_sync(&menu);
+#endif
     if (status) GuiStatus = -3;
     else GuiStatus = -2;
 #if defined(CONFIG_KSHIM_CHARGER_MODE) && CONFIG_KSHIM_CHARGER_MODE && \
