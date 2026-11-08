@@ -7,6 +7,9 @@
 ### Version
 - Bumped to `0.0.6`.
 
+### Fixes
+- The Atlas home page now resolves "Last boot" from the saved index instead of always showing `—`.
+
 ### Performance
 - Cut the menu-to-OS handoff from 30–40 s to about 13 s (Android) and 11 s
   (Linux) on sheng. The fix caches the PMIC SDAM record and the SPMI

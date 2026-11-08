@@ -25,6 +25,7 @@
 #include <boot_metrics.h>
 #if CONFIG_KSHIM_MENU_ADVANCED_ACTIONS
 #include <qcom_reboot.h>
+#include <qcom_nv.h>
 #endif
 #include <qcom_nv.h>
 #include "../ui/charging_glyphs.h"
@@ -1718,11 +1719,16 @@ static int menu_build(struct menu_selection *menu, const char *const *names,
 static void atlas_sync(struct menu_selection *menu)
 {
     const char *def = NULL;
+    const char *last = NULL;
+    uint8_t nv_index = 0;
+    int nv_slot = -1;
     if (menu->original_initial < menu->pages[MENU_PAGE_MAIN].count)
         def = menu->pages[MENU_PAGE_MAIN].names[menu->original_initial];
+    if (kshim_nv_last_status(&nv_index, &nv_slot) == 0 &&
+        nv_index < menu->pages[MENU_PAGE_MAIN].count)
+        last = menu->pages[MENU_PAGE_MAIN].names[nv_index];
     kshim_lvgl_set_page(&Lvgl, (uint8_t)menu->page);
-    kshim_lvgl_set_environment(&Lvgl, "A", def,
-                               menu->setting_nv_name[0] ? menu->setting_nv_name : NULL);
+    kshim_lvgl_set_environment(&Lvgl, "A", def, last);
     /* menu->info_values is a char[7][192] array, not an array of pointers.
      * Build a pointer table once; the strings live as long as the menu. */
     static const char *InfoPtrs[KSHIM_INFO_FIELD_COUNT];
