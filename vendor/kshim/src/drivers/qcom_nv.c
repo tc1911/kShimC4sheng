@@ -18,6 +18,8 @@
 
 #define NV_OFFSET       0x50U
 #define NV_BACKUP       0x80U
+#define NV_QUICK        0x70U
+#define NV_QUICK_MAGIC  0xA5U
 #define NV_MAGIC        0x5445534BU  /* "KSET" */
 #define NV_VERSION      2U
 #define NV_FLAG_SETTINGS 1U
@@ -36,6 +38,10 @@ struct nv_record {
 static int NvLastStatus = -1;
 static int NvSlot = -1;
 static uint8_t NvLastIndex;
+static uint32_t NvLastFingerprint;
+static struct nv_record NvCached;
+static int NvCachedValid;
+static int NvQuickLoaded;
 
 static uint32_t nv_crc32(const uint8_t *data, size_t len)
 {
@@ -73,34 +79,63 @@ static int nv_read_any(const void *fdt, struct nv_record *rec)
     return -1;
 }
 
+static int nv_quick_write(const void *fdt, uint16_t base, uint8_t index)
+{
+    struct kshim_qcom_reboot_config cfg;
+    uint8_t buf[4] = {NV_QUICK_MAGIC, index, (uint8_t)~index, 0x5AU};
+    if (kshim_qcom_nv_config(fdt, base, &cfg)) return -1;
+    return kshim_qcom_nv_write_cfg(&cfg, NV_QUICK, buf, sizeof(buf)) ? -1 : 0;
+}
+
+static int nv_quick_read(const void *fdt, uint16_t base, uint8_t *index)
+{
+    struct kshim_qcom_reboot_config cfg;
+    uint8_t buf[4];
+    if (kshim_qcom_nv_config(fdt, base, &cfg)) return -1;
+    if (kshim_qcom_nv_read_cfg(&cfg, NV_QUICK, buf, sizeof(buf))) return -1;
+    if (buf[0] != NV_QUICK_MAGIC || buf[2] != (uint8_t)~buf[1] || buf[3] != 0x5AU)
+        return -1;
+    *index = buf[1];
+    return 0;
+}
+
 static int nv_write_at(const void *fdt, uint16_t base, uint16_t off,
                        struct nv_record *rec)
 {
     struct kshim_qcom_reboot_config cfg;
-    struct nv_record check;
     rec->magic = NV_MAGIC;
     rec->version = NV_VERSION;
     rec->crc = nv_crc32((const uint8_t *)rec, offsetof(struct nv_record, crc));
     if (kshim_qcom_nv_config(fdt, base, &cfg)) return -1;
-    if (kshim_qcom_nv_write_cfg(&cfg, off, rec, sizeof(*rec))) return -1;
-    if (kshim_qcom_nv_read_cfg(&cfg, off, &check, sizeof(check))) return -1;
-    return memcmp(rec, &check, sizeof(check)) == 0 ? 0 : -1;
+    /* Do not read the record back here: every SPMI word can cost a full
+     * timeout on a dead SDAM slot, and the CRC is validated on the next
+     * load anyway. */
+    return kshim_qcom_nv_write_cfg(&cfg, off, rec, sizeof(*rec)) ? -1 : 0;
 }
 
 static int nv_write_any(const void *fdt, const struct nv_record *rec)
 {
     static const uint16_t bases[] = {0x8400U, 0x8500U};
-    int wrote = 0;
-    for (size_t i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i) {
+    /* Reuse the slot that was already found during load.  Probing every
+     * candidate slot costs one SPMI timeout per word on this PMIC, which
+     * added roughly 38 seconds to every handoff. */
+    size_t first = 0, last = sizeof(bases) / sizeof(bases[0]);
+    if (NvSlot >= (int)NV_OFFSET) {
+        uint16_t base = (uint16_t)(NvSlot & 0xFF00);
+        if (base == bases[0]) { first = 0; last = 1; }
+        else if (base == bases[1]) { first = 1; last = 2; }
+        else { first = 0; last = 0; }
+    }
+    for (size_t i = first; i < last; ++i) {
         struct nv_record copy = *rec;
         if (nv_write_at(fdt, bases[i], NV_OFFSET, &copy) == 0) {
             NvSlot = (int)bases[i] + NV_OFFSET;
-            wrote = 1;
+            NvCached = copy;
+            NvCachedValid = 1;
+            return 0;
         }
-        copy = *rec;
-        (void)nv_write_at(fdt, bases[i], NV_BACKUP, &copy);
     }
-    return wrote ? 0 : -1;
+    return -1;
 }
 
 int kshim_nv_last_status(uint8_t *index, int *slot)
@@ -117,8 +152,18 @@ int kshim_nv_load(const void *fdt, struct kshim_nv_selection *out)
     NvLastStatus = -1;
     NvLastIndex = 0;
     NvSlot = -1;
+    NvQuickLoaded = 0;
     if (!out) return -1;
     if (nv_read_any(fdt, &rec) == 0) {
+        NvCached = rec;
+        NvCachedValid = 1;
+        uint8_t quick;
+        if (nv_quick_read(fdt, (uint16_t)0x8400U, &quick) == 0 ||
+            nv_quick_read(fdt, (uint16_t)0x8500U, &quick) == 0)
+        {
+            rec.index = quick;
+            NvQuickLoaded = 1;
+        }
         out->index = rec.index;
         out->fingerprint = rec.fingerprint;
         out->language = rec.language;
@@ -126,6 +171,7 @@ int kshim_nv_load(const void *fdt, struct kshim_nv_selection *out)
         out->has_settings = (rec.flags & NV_FLAG_SETTINGS) != 0;
         NvLastStatus = 0;
         NvLastIndex = rec.index;
+        NvLastFingerprint = rec.fingerprint;
         return 0;
     }
     NvLastStatus = -2;
@@ -134,15 +180,20 @@ int kshim_nv_load(const void *fdt, struct kshim_nv_selection *out)
 
 int kshim_nv_store(const void *fdt, uint8_t index, uint32_t fingerprint)
 {
-    struct nv_record rec = {0};
-
-    (void)nv_read_any(fdt, &rec);
-    rec.index = index;
-    rec.fingerprint = fingerprint;
-    if (nv_write_any(fdt, &rec) == 0) {
-        NvLastStatus = 0;
-        NvLastIndex = index;
+    /* The menu selection usually does not change between boots.  Skipping
+     * the write also avoids retrying dead SDAM slots on every handoff. */
+    if (NvLastStatus == 0 && NvLastIndex == index &&
+        (NvQuickLoaded || NvLastFingerprint == fingerprint))
         return 0;
+    {
+        uint16_t base = NvSlot >= (int)NV_OFFSET ? (uint16_t)(NvSlot & 0xFF00U) : 0x8400U;
+        if (nv_quick_write(fdt, base, index) == 0) {
+            NvLastStatus = 0;
+            NvLastIndex = index;
+            NvLastFingerprint = fingerprint;
+            NvQuickLoaded = 1;
+            return 0;
+        }
     }
     return -1;
 }
@@ -151,7 +202,7 @@ int kshim_nv_store_settings(const void *fdt, uint8_t language, uint8_t timeout_s
 {
     struct nv_record rec = {0};
 
-    (void)nv_read_any(fdt, &rec);
+    rec = NvCachedValid ? NvCached : (struct nv_record){0};
     rec.language = language;
     rec.timeout_s = timeout_s;
     rec.flags |= NV_FLAG_SETTINGS;

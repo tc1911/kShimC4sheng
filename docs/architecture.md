@@ -56,12 +56,24 @@ is still undecoded; this is a known limitation.
 ## Settings and last boot
 
 After an entry hands off successfully, its index, the menu language and the
-boot delay are written to PMIC SDAM:
+boot delay are persisted in PMIC SDAM:
 
-- primary record `0x8400`, backup `0x8500`, offsets `0x50/0x80`;
-- `KSET` v2 magic + CRC32;
-- if the record is invalid, fall back to the manifest default without blocking
+- the last-entry index uses a 4-byte quick slot at offset `0x70` on the SDAM
+  base that was found during load;
+- language and boot delay use the `KSET` v2 record at `0x50` (CRC32), with the
+  secondary base at `0x8500` as fallback;
+- if no valid record exists, fall back to the manifest default without blocking
   manual selection.
+
+The first implementation rewrote a 16-byte record to every candidate slot,
+read it back for verification, and re-ran `SpmiLibInit()` on every 4-byte
+access. On sheng this delayed the handoff by 30-40 seconds. The current path
+reads the record once, caches it, reuses the SPMI controller, writes only the
+changed entry and skips the write entirely when the selection did not change.
+
+Measured from menu confirmation to the OS on sheng: about 13 s for Android and
+11 s for Linux. Switching to a different entry adds roughly 6 s for the SDAM
+write; booting the same entry again does not.
 
 ## Key limits
 

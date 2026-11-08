@@ -22,6 +22,8 @@
 上次启动记录、Recovery/Fastboot 和关机充电界面可用。
 
 - 当前 UI：Atlas 六页（启动环境 / 高级启动 / 设置 / 语言 / 开机延迟 / 设备信息）。
+- 菜单确认到系统：Android 约 13 秒 / Linux 约 11 秒；首次切换到不同条目
+  会多约 6 秒的 SDAM 写。
 - 常驻 `boot_a`，A 槽；不使用 `misc`、不切换 `slot_suffix`。
 - 原厂 `boot_a` 与 GPT 备份只保存在本地，不要提交到仓库。
 - 回滚：`fastboot flash boot_a /path/to/stock-boot.img`。

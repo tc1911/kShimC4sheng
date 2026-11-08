@@ -24,6 +24,8 @@ the charger screen work.
 
 - UI: Atlas, six pages (Boot environment / Advanced boot / Settings /
   Language / Boot delay / Device info).
+- Menu-to-OS handoff: about 13 s (Android) / 11 s (Linux); the first switch to
+  a different entry adds about 6 s for the SDAM write.
 - Lives in `boot_a`, slot A; no `misc`, no `slot_suffix` changes.
 - Keep your own stock `boot_a` and GPT backup locally; do not commit them.
 - Rollback: `fastboot flash boot_a /path/to/stock-boot.img`.

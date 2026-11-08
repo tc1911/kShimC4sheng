@@ -2,6 +2,17 @@
 
 **English** | [简体中文](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+### Performance
+- Cut the menu-to-OS handoff from 30–40 s to about 13 s (Android) and 11 s
+  (Linux) on sheng. The fix caches the PMIC SDAM record and the SPMI
+  controller, writes the last-entry index to a 4-byte quick slot at `0x70`,
+  writes the full `KSET` record only when language/delay change, skips
+  unchanged writes and drops the write-back verification.
+- Switching to a different entry still costs about 6 s for the SDAM write;
+  booting the same entry again does not.
+
 ## 0.0.5 — 2026-11-07
 
 0.0.5 is the first release built around the Atlas UI. The old single-column
